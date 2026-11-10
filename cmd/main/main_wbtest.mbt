@@ -49,3 +49,27 @@ test "ETag read conditions use strong and weak comparisons with precedence" {
   assert_eq(read_precondition("", "\"other\", \"abc\"", "abc"), 304)
   assert_eq(read_precondition("", "\"other\"", "abc"), 200)
 }
+
+///|
+test "list entries group directories and filter start-after in UTF-8 order" {
+  let keys = [
+    "docs/a", "docs/nested/b", "docs/nested/c", "docs/", "root", "photos/a",
+  ]
+  assert_eq(list_entries(keys, "", "/", ""), [
+    ("docs/", true),
+    ("photos/", true),
+    ("root", false),
+  ])
+  assert_eq(list_entries(keys, "docs/", "/", ""), [
+    ("docs/", false),
+    ("docs/a", false),
+    ("docs/nested/", true),
+  ])
+  assert_eq(list_entries(keys, "docs/", "/", "docs/nested/"), [])
+  assert_eq(list_entries(keys, "", "/", "docs/"), [
+    ("photos/", true),
+    ("root", false),
+  ])
+  assert_eq(list_entries(["aa", "z"], "", "", "aa"), [("z", false)])
+  assert_eq(list_entries(["a::b", "a::c"], "", "::", ""), [("a::", true)])
+}

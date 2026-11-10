@@ -17,7 +17,7 @@ MoonBit 已经有 S3 客户端，但没有可以直接部署的 S3 服务端。�
 | 健康检查 `GET /healthz` | 已完成 |
 | 建桶、删桶、列桶 | 已完成 |
 | PUT / GET / HEAD / DELETE 对象 | 已完成 |
-| ListObjectsV2 基础前缀查询和分页 | 已完成 |
+| ListObjectsV2 前缀、分页、delimiter / CommonPrefixes、start-after | 已完成 |
 | CORS 预检和响应头 | 已完成 |
 | 可选 SigV4 Header 认证 | 已完成 |
 | MD5 ETag、Content-Type 元数据 | 已完成 |
@@ -31,7 +31,6 @@ MoonBit 已经有 S3 客户端，但没有可以直接部署的 S3 服务端。�
 
 - 没有 Multipart Upload；大文件目前一次请求读完，适合中小文件和开发测试；
 - 没有 Presigned URL 和按日期判断的条件请求；多区间 Range 请求暂按完整下载处理；
-- ListObjectsV2 暂未实现 `delimiter` / `CommonPrefixes`；
 - `LastModified` 暂时是固定占位值；
 - 没有版本控制、生命周期、IAM/ACL、对象锁和服务端加密；
 - 没有 Web 控制台、备份命令和事件通知；
@@ -81,6 +80,9 @@ curl --noproxy '*' -H 'If-None-Match: "替换为实际ETag"' http://127.0.0.1:90
 
 # 列对象
 curl --noproxy '*' 'http://127.0.0.1:9000/avatars?list-type=2&prefix=demo/'
+
+# 按文件夹浏览：子目录作为 CommonPrefixes 返回
+curl --noproxy '*' 'http://127.0.0.1:9000/avatars?list-type=2&delimiter=/&prefix=demo/'
 
 # 列桶
 curl --noproxy '*' http://127.0.0.1:9000/
@@ -137,6 +139,8 @@ python3 scripts/object_regression.py
 
 覆盖 UTF-8 对象名与排序、加号前缀、多页遍历、空页和非法分页参数。
 `max-keys` 最大为 1000；非法值和溢出的 continuation token 返回 `400 InvalidArgument`。
+`delimiter` 将子目录合并成 `CommonPrefixes`，每个目录和对象各占一个分页名额；`start-after` 按 UTF-8 字节顺序过滤对象和目录。
+目前 continuation token 是结果偏移量，翻页需保留相同的 prefix、delimiter 和 start-after；并发增删对象时不保证分页快照一致。
 对象下载回归覆盖区间、跨块读取、越界、空文件和 HEAD。Range 仅用于 GET；格式错误、未知单位和多区间请求按完整下载处理。
 GET / HEAD 支持 `If-Match`（不匹配返回 412）和 `If-None-Match`（匹配返回 304），支持通配符和 ETag 列表。
 `If-Match` 使用强比较，`If-None-Match` 接受弱 ETag。`If-Range` 仅接受匹配的强 ETag，否则回退完整下载。
@@ -147,7 +151,7 @@ GET / HEAD 支持 `If-Match`（不匹配返回 412）和 `If-None-Match`（匹�
 ## 路线图
 
 1. 补 Multipart Upload、日期条件请求和真实 `LastModified`；
-2. 补 Presigned URL、`delimiter` / `CommonPrefixes` 和稳定的错误码；
+2. 补 Presigned URL 和稳定的错误码；
 3. 用 AWS CLI、MinIO `mc` 和 Ceph `s3-tests` 子集做互通测试；
 4. 增加管理命令行、Web 控制台、备份恢复和事件通知；
 5. 增加版本控制、Docker 镜像、发布流程和更多崩溃恢复测试。

@@ -533,6 +533,8 @@ async fn list_objects(
       return
     }
   }
+  let delimiter = @core.query_value(params, "delimiter").unwrap_or("")
+  let start_after = @core.query_value(params, "start-after").unwrap_or("")
   let offset = match
     parse_list_number(@core.query_value(params, "continuation-token"), 0) {
     Some(value) => value
@@ -556,14 +558,10 @@ async fn list_objects(
       }
     }
   }
-  keys.sort_by((left, right) => {
-    @utf8.encode(left)
-    .clamped_view()
-    .lexical_compare(@utf8.encode(right).clamped_view())
-  })
-  let start = if offset < keys.length() { offset } else { keys.length() }
-  let end = if max_keys >= keys.length() - start {
-    keys.length()
+  let entries = list_entries(keys, prefix, delimiter, start_after)
+  let start = if offset < entries.length() { offset } else { entries.length() }
+  let end = if max_keys >= entries.length() - start {
+    entries.length()
   } else {
     start + max_keys
   }
@@ -578,7 +576,18 @@ async fn list_objects(
     "</KeyCount><MaxKeys>" +
     max_keys.to_string() +
     "</MaxKeys>"
-  let truncated = max_keys > 0 && end < keys.length()
+  if @core.query_value(params, "delimiter") is Some(_) {
+    body += "<Delimiter>" + @core.xml_escape(delimiter) + "</Delimiter>"
+  }
+  if @core.query_value(params, "start-after") is Some(_) {
+    body += "<StartAfter>" + @core.xml_escape(start_after) + "</StartAfter>"
+  }
+  if @core.query_value(params, "continuation-token") is Some(token) {
+    body += "<ContinuationToken>" +
+      @core.xml_escape(token) +
+      "</ContinuationToken>"
+  }
+  let truncated = max_keys > 0 && end < entries.length()
   let truncated_text = if truncated { "true" } else { "false" }
   body += "<IsTruncated>" + truncated_text + "</IsTruncated>"
   if truncated {
@@ -587,7 +596,13 @@ async fn list_objects(
       "</NextContinuationToken>"
   }
   for i in start..<end {
-    let key = keys[i]
+    let (key, common_prefix) = entries[i]
+    if common_prefix {
+      body += "<CommonPrefixes><Prefix>" +
+        @core.xml_escape(key) +
+        "</Prefix></CommonPrefixes>"
+      continue
+    }
     let path = object_file(config, bucket, key)
     let (etag, _) = object_meta(config, bucket, key)
     body += "<Contents><Key>" +

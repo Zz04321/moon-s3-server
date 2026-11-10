@@ -95,7 +95,43 @@ def main():
                         status, body = request("GET", f"/regression-bucket?list-type=2&{parameter}={value}")
                         assert status == 400, (parameter, value, status, body)
                         assert ET.fromstring(body).findtext("Code") == "InvalidArgument"
-                print("List regression passed: UTF-8 ordering, encoding, pagination and invalid parameters.")
+                extra_keys = ["docs/", "docs/a.txt", "docs/sub/b.txt", "docs/sub/c.txt", "photos/a.jpg", "组/头像.png"]
+                for key in extra_keys:
+                    assert request("PUT", "/regression-bucket/" + urllib.parse.quote(key, safe="/"), b"data")[0] == 200
+                page = listing("prefix=docs%2F&delimiter=%2F")
+                assert page.findtext("s3:Delimiter", namespaces=NAMESPACE) == "/"
+                assert page.findtext("s3:KeyCount", namespaces=NAMESPACE) == "3"
+                assert [entry.text for entry in page.findall("s3:Contents/s3:Key", NAMESPACE)] == ["docs/", "docs/a.txt"]
+                assert [entry.text for entry in page.findall("s3:CommonPrefixes/s3:Prefix", NAMESPACE)] == ["docs/sub/"]
+                page = listing("prefix=docs%2F&delimiter=%2F&start-after=docs%2Fsub%2F")
+                assert page.findtext("s3:KeyCount", namespaces=NAMESPACE) == "0"
+                page = listing("delimiter=%2F&start-after=docs%2F&max-keys=1000")
+                assert "docs/" not in [entry.text for entry in page.findall("s3:CommonPrefixes/s3:Prefix", NAMESPACE)]
+
+                found = []
+                token = None
+                base_query = "delimiter=%2F&max-keys=1&start-after=aa"
+                for attempt in range(len(keys) + len(extra_keys) + 1):
+                    query = base_query + ("&continuation-token=" + token if token else "")
+                    page = listing(query)
+                    if token:
+                        assert page.findtext("s3:ContinuationToken", namespaces=NAMESPACE) == token
+                    assert page.findtext("s3:StartAfter", namespaces=NAMESPACE) == "aa"
+                    items = [(entry.text, False) for entry in page.findall("s3:Contents/s3:Key", NAMESPACE)]
+                    items += [(entry.text, True) for entry in page.findall("s3:CommonPrefixes/s3:Prefix", NAMESPACE)]
+                    assert len(items) == 1
+                    assert page.findtext("s3:KeyCount", namespaces=NAMESPACE) == "1"
+                    found.extend(items)
+                    if page.findtext("s3:IsTruncated", namespaces=NAMESPACE) == "false":
+                        break
+                    token = page.findtext("s3:NextContinuationToken", namespaces=NAMESPACE)
+                    assert token
+                else:
+                    raise AssertionError("grouped pagination did not finish")
+                expected_entries = {(key.split("/")[0] + "/", True) if "/" in key else (key, False) for key in keys + extra_keys}
+                expected_entries = sorted((entry for entry in expected_entries if entry[0].encode() > b"aa"), key=lambda entry: entry[0].encode())
+                assert found == expected_entries, (found, expected_entries)
+                print("List regression passed: encoding, pagination, directory grouping and start-after.")
             except BaseException:
                 server_log.seek(0)
                 print(server_log.read().decode(errors="replace"))
