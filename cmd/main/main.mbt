@@ -236,6 +236,46 @@ async fn put_object(
 }
 
 ///|
+async fn check_read_precondition(
+  config : Config,
+  request : @http.Request,
+  etag : String,
+  conn : @http.ServerConnection,
+) -> Bool {
+  let status = read_precondition(
+    header(request.headers, "if-match"),
+    header(request.headers, "if-none-match"),
+    etag,
+  )
+  if status == 200 {
+    return true
+  }
+  let headers : Map[@http.CaseInsensitiveString, String] = {
+    "ETag": "\"" + etag + "\"",
+    "Access-Control-Allow-Origin": config.cors_origin,
+  }
+  let error_body = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>PreconditionFailed</Code><Message>At least one precondition failed.</Message><RequestId>moon-s3-server</RequestId></Error>"
+  if status == 412 {
+    headers["Content-Type"] = "application/xml"
+    headers["Content-Length"] = @utf8.encode(error_body).length().to_string()
+  }
+  conn.send_response(
+    status,
+    if status == 304 {
+      "Not Modified"
+    } else {
+      "Precondition Failed"
+    },
+    extra_headers=headers,
+  )
+  if status == 412 && !(request.meth is Head) {
+    conn.write(error_body)
+  }
+  conn.end_response()
+  false
+}
+
+///|
 async fn get_object(
   config : Config,
   request : @http.Request,
@@ -257,8 +297,17 @@ async fn get_object(
   let (etag, content_type) = object_meta(config, bucket, key)
   let file = @fs.open(path, mode=ReadOnly)
   defer file.close()
+  if !check_read_precondition(config, request, etag, conn) {
+    return
+  }
   let size = file.size()
-  match download_range(header(request.headers, "range"), size) {
+  let if_range = header(request.headers, "if-range")
+  let selected_range = if if_range.is_empty() || if_range == "\"" + etag + "\"" {
+    download_range(header(request.headers, "range"), size)
+  } else {
+    Full
+  }
+  match selected_range {
     Full => ()
     Unsatisfiable => {
       conn.send_response(416, "Requested Range Not Satisfiable", extra_headers={
@@ -308,6 +357,7 @@ async fn get_object(
 ///|
 async fn head_object(
   config : Config,
+  request : @http.Request,
   bucket : String,
   key : String,
   conn : @http.ServerConnection,
@@ -321,6 +371,9 @@ async fn head_object(
     return
   }
   let (etag, content_type) = object_meta(config, bucket, key)
+  if !check_read_precondition(config, request, etag, conn) {
+    return
+  }
   conn.send_response(200, "OK", extra_headers={
     "Content-Type": content_type,
     "ETag": "\"" + etag + "\"",
@@ -669,7 +722,7 @@ async fn handle_request(
             Put =>
               put_object(config, request, name, object_key, request_body, conn)
             Get => get_object(config, request, name, object_key, conn)
-            Head => head_object(config, name, object_key, conn)
+            Head => head_object(config, request, name, object_key, conn)
             Delete => delete_object(config, name, object_key, conn)
             _ =>
               send_error(

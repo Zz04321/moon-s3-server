@@ -36,3 +36,16 @@ test "download ranges support closed open and suffix forms" {
     assert_eq(download_range(value, 10L), Full)
   }
 }
+
+///|
+test "ETag read conditions use strong and weak comparisons with precedence" {
+  assert_eq(read_precondition("", "", "abc"), 200)
+  assert_eq(read_precondition("*", "", "abc"), 200)
+  assert_eq(read_precondition("\"other\", \"abc\"", "", "abc"), 200)
+  assert_eq(read_precondition("W/\"abc\"", "", "abc"), 412)
+  assert_eq(read_precondition("\"other\"", "*", "abc"), 412)
+  assert_eq(read_precondition("", "*", "abc"), 304)
+  assert_eq(read_precondition("", "W/\"abc\"", "abc"), 304)
+  assert_eq(read_precondition("", "\"other\", \"abc\"", "abc"), 304)
+  assert_eq(read_precondition("", "\"other\"", "abc"), 200)
+}

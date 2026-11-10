@@ -75,3 +75,33 @@ fn download_range(value : StringView, size : Int64) -> DownloadRange {
     }
   }
 }
+
+///|
+fn etag_matches(value : StringView, etag : String, weak~ : Bool) -> Bool {
+  if value.trim() == "*" {
+    return true
+  }
+  let quoted = "\"" + etag + "\""
+  for item in value.split(",") {
+    let candidate = item.trim()
+    if candidate == quoted || (weak && candidate == "W/" + quoted) {
+      return true
+    }
+  }
+  false
+}
+
+///|
+fn read_precondition(
+  if_match : StringView,
+  if_none_match : StringView,
+  etag : String,
+) -> Int32 {
+  if !if_match.is_empty() && !etag_matches(if_match, etag, weak=false) {
+    return 412
+  }
+  if !if_none_match.is_empty() && etag_matches(if_none_match, etag, weak=true) {
+    return 304
+  }
+  200
+}
