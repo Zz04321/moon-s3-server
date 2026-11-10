@@ -1,0 +1,62 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "Zz04321/moon-s3-server"
+
+// Values
+pub fn canonical_headers(StringView, Array[(String, String)]) -> String
+
+pub fn canonical_query(Array[QueryParam]) -> String
+
+pub fn filename_to_key(StringView) -> String?
+
+pub fn hmac_sha256(BytesView, BytesView) -> FixedArray[Byte]
+
+pub fn hmac_sha256_hex(BytesView, BytesView) -> String
+
+pub fn key_to_filename(StringView) -> String
+
+pub fn md5_hex(BytesView) -> String
+
+pub fn parse_authorization(StringView) -> ParsedAuth?
+
+pub fn percent_decode(StringView) -> String
+
+pub fn query_pairs(StringView) -> Array[QueryParam]
+
+pub fn query_value(Array[QueryParam], StringView) -> String?
+
+pub fn sha256_hex(BytesView) -> String
+
+pub fn signing_key(StringView, StringView, StringView, StringView) -> FixedArray[Byte]
+
+pub fn split_bucket_key(StringView) -> (String?, String?)
+
+pub fn split_raw_path(StringView) -> (String, String)
+
+pub fn uri_encode(StringView, allow_slash? : Bool) -> String
+
+pub fn valid_bucket_name(StringView) -> Bool
+
+pub fn verify_sigv4(StringView, StringView, Array[QueryParam], Array[(String, String)], StringView, StringView, StringView, StringView) -> Bool
+
+pub fn xml_escape(StringView) -> String
+
+// Errors
+
+// Types and methods
+pub(all) struct ParsedAuth {
+  access_key : String
+  date : String
+  region : String
+  service : String
+  signed_headers : String
+  signature : String
+}
+
+pub(all) struct QueryParam {
+  name : String
+  value : String
+}
+
+// Type aliases
+
+// Traits
