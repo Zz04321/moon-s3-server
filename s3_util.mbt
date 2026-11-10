@@ -16,7 +16,7 @@ pub(all) struct ParsedAuth {
 
 ///|
 pub fn percent_decode(input : StringView) -> String {
-  let chars = input.to_string().to_array()
+  let chars = input.to_owned().to_array()
   let out : Array[Byte] = []
   let mut i = 0
   while i < chars.length() {
@@ -56,7 +56,7 @@ fn hex_digit(c : Char) -> Int32? {
 
 ///|
 pub fn uri_encode(input : StringView, allow_slash~ : Bool = false) -> String {
-  let bytes = @utf8.encode(input.to_string())
+  let bytes = @utf8.encode(input.to_owned())
   let mut out = ""
   for i in 0..<bytes.length() {
     let b = bytes[i].to_int()
@@ -103,7 +103,7 @@ pub fn query_pairs(query : StringView) -> Array[QueryParam] {
 ///|
 pub fn query_value(params : Array[QueryParam], name : StringView) -> String? {
   for param in params {
-    if param.name == name.to_string() {
+    if param.name == name.to_owned() {
       return Some(param.value)
     }
   }
@@ -123,8 +123,8 @@ pub fn canonical_query(params : Array[QueryParam]) -> String {
 ///|
 pub fn split_raw_path(path : StringView) -> (String, String) {
   match path.split_once("?") {
-    Some(pair) => (pair.0.to_string(), pair.1.to_string())
-    None => (path.to_string(), "")
+    Some(pair) => (pair.0.to_owned(), pair.1.to_owned())
+    None => (path.to_owned(), "")
   }
 }
 
@@ -157,7 +157,7 @@ pub fn valid_bucket_name(name : StringView) -> Bool {
   if name.length() < 3 || name.length() > 63 {
     return false
   }
-  let chars = name.to_string().to_array()
+  let chars = name.to_owned().to_array()
   for i in 0..<chars.length() {
     let c = chars[i]
     let ok = (c >= 'a' && c <= 'z') ||
@@ -175,12 +175,12 @@ pub fn valid_bucket_name(name : StringView) -> Bool {
 
 ///|
 pub fn key_to_filename(key : StringView) -> String {
-  @crypto.bytes_to_hex_string(@utf8.encode(key.to_string()))
+  @crypto.bytes_to_hex_string(@utf8.encode(key.to_owned()))
 }
 
 ///|
 pub fn filename_to_key(name : StringView) -> String? {
-  let chars = name.to_string().to_array()
+  let chars = name.to_owned().to_array()
   if chars.length() == 0 || chars.length() % 2 != 0 {
     return None
   }
@@ -199,7 +199,7 @@ pub fn filename_to_key(name : StringView) -> String? {
 ///|
 pub fn xml_escape(value : StringView) -> String {
   value
-  .to_string()
+  .to_owned()
   .replace_all(old="&", new="&amp;")
   .replace_all(old="<", new="&lt;")
   .replace_all(old=">", new="&gt;")
@@ -235,19 +235,19 @@ pub fn signing_key(
   service : StringView,
 ) -> FixedArray[Byte] {
   let k_date = hmac_sha256(
-    @utf8.encode("AWS4" + secret.to_string()).clamped_view(),
-    @utf8.encode(date.to_string()).clamped_view(),
+    @utf8.encode("AWS4" + secret.to_owned()).clamped_view(),
+    @utf8.encode(date.to_owned()).clamped_view(),
   )
   let k_region = hmac_sha256(
-    Bytes::from_fixedarray(k_date).clamped_view(),
-    @utf8.encode(region.to_string()).clamped_view(),
+    Bytes::from_array(k_date[:]).clamped_view(),
+    @utf8.encode(region.to_owned()).clamped_view(),
   )
   let k_service = hmac_sha256(
-    Bytes::from_fixedarray(k_region).clamped_view(),
-    @utf8.encode(service.to_string()).clamped_view(),
+    Bytes::from_array(k_region[:]).clamped_view(),
+    @utf8.encode(service.to_owned()).clamped_view(),
   )
   hmac_sha256(
-    Bytes::from_fixedarray(k_service).clamped_view(),
+    Bytes::from_array(k_service[:]).clamped_view(),
     @utf8.encode("aws4_request").clamped_view(),
   )
 }
@@ -261,7 +261,7 @@ pub fn parse_authorization(value : StringView) -> ParsedAuth? {
       let mut signed_headers : String = ""
       let mut signature : String = ""
       for raw_part in rest.split(",") {
-        let part = raw_part.trim_space()
+        let part = raw_part.trim()
         if part.has_prefix("Credential=") {
           credential = part[11:].to_owned()
         } else if part.has_prefix("SignedHeaders=") {
@@ -308,14 +308,14 @@ pub fn canonical_headers(
         value = pair.1
       }
     }
-    out += wanted + ":" + value.trim_space().to_owned() + "\n"
+    out += wanted + ":" + value.trim().to_owned() + "\n"
   }
   out
 }
 
 ///|
 pub fn verify_sigv4(
-  method : StringView,
+  http_method : StringView,
   canonical_uri : StringView,
   query : Array[QueryParam],
   signed_header_pairs : Array[(String, String)],
@@ -343,9 +343,9 @@ pub fn verify_sigv4(
         auth.signed_headers,
         signed_header_pairs,
       )
-      let canonical_request : String = method.to_string() +
+      let canonical_request : String = http_method.to_owned() +
         "\n" +
-        canonical_uri.to_string() +
+        canonical_uri.to_owned() +
         "\n" +
         canonical_query(query) +
         "\n" +
@@ -353,7 +353,7 @@ pub fn verify_sigv4(
         "\n" +
         auth.signed_headers +
         "\n" +
-        payload_hash.to_string()
+        payload_hash.to_owned()
       let scope = auth.date +
         "/" +
         auth.region +
@@ -373,7 +373,7 @@ pub fn verify_sigv4(
         auth.service,
       )
       let expected : String = hmac_sha256_hex(
-        Bytes::from_fixedarray(key).clamped_view(),
+        Bytes::from_array(key[:]).clamped_view(),
         @utf8.encode(string_to_sign).clamped_view(),
       )
       expected == auth.signature
