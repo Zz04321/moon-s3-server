@@ -21,6 +21,7 @@ MoonBit 已经有 S3 客户端，但没有可以直接部署的 S3 服务端。�
 | CORS 预检和响应头 | 已完成 |
 | 可选 SigV4 Header 认证 | 已完成 |
 | MD5 ETag、Content-Type 元数据 | 已完成 |
+| 单区间 Range 下载（指定区间、起点、末尾字节） | 已完成 |
 | AWS CLI / MinIO `mc` 互通 | 待补充自动测试 |
 
 ## 当前边界
@@ -28,7 +29,7 @@ MoonBit 已经有 S3 客户端，但没有可以直接部署的 S3 服务端。�
 现在**还不是**完整的 S3 实现：
 
 - 没有 Multipart Upload；大文件目前一次请求读完，适合中小文件和开发测试；
-- 没有 Presigned URL、Range 下载和条件请求；
+- 没有 Presigned URL 和条件请求；多区间 Range 请求暂按完整下载处理；
 - ListObjectsV2 暂未实现 `delimiter` / `CommonPrefixes`；
 - `LastModified` 暂时是固定占位值；
 - 没有版本控制、生命周期、IAM/ACL、对象锁和服务端加密；
@@ -70,6 +71,9 @@ curl --noproxy '*' -X PUT \
 
 # 下载
 curl --noproxy '*' http://127.0.0.1:9000/avatars/demo/hello.txt
+
+# 下载前 10 字节，返回 206 和 Content-Range；越界返回 416
+curl --noproxy '*' -H 'Range: bytes=0-9' http://127.0.0.1:9000/avatars/demo/hello.txt
 
 # 列对象
 curl --noproxy '*' 'http://127.0.0.1:9000/avatars?list-type=2&prefix=demo/'
@@ -124,16 +128,18 @@ moon fmt
 
 ```bash
 python3 scripts/list_regression.py
+python3 scripts/object_regression.py
 ```
 
 覆盖 UTF-8 对象名与排序、加号前缀、多页遍历、空页和非法分页参数。
 `max-keys` 最大为 1000；非法值和溢出的 continuation token 返回 `400 InvalidArgument`。
+对象下载回归覆盖区间、跨块读取、越界、空文件和 HEAD。Range 仅用于 GET；格式错误、未知单位和多区间请求按完整下载处理。
 
 测试不依赖外部数据库或 Docker。完整接口验证见 `scripts/smoke.sh`，CI 配置见 `.github/workflows/ci.yml`。
 
 ## 路线图
 
-1. 补 Multipart Upload、Range 下载、条件请求和真实 `LastModified`；
+1. 补 Multipart Upload、条件请求和真实 `LastModified`；
 2. 补 Presigned URL、`delimiter` / `CommonPrefixes` 和稳定的错误码；
 3. 用 AWS CLI、MinIO `mc` 和 Ceph `s3-tests` 子集做互通测试；
 4. 增加管理命令行、Web 控制台、备份恢复和事件通知；

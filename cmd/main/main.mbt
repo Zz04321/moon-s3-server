@@ -238,6 +238,7 @@ async fn put_object(
 ///|
 async fn get_object(
   config : Config,
+  request : @http.Request,
   bucket : String,
   key : String,
   conn : @http.ServerConnection,
@@ -256,10 +257,47 @@ async fn get_object(
   let (etag, content_type) = object_meta(config, bucket, key)
   let file = @fs.open(path, mode=ReadOnly)
   defer file.close()
+  let size = file.size()
+  match download_range(header(request.headers, "range"), size) {
+    Full => ()
+    Unsatisfiable => {
+      conn.send_response(416, "Requested Range Not Satisfiable", extra_headers={
+        "Content-Range": "bytes */" + size.to_string(),
+        "Content-Length": "0",
+        "Access-Control-Allow-Origin": config.cors_origin,
+      })
+      conn.end_response()
+      return
+    }
+    Partial(start, end) => {
+      conn.send_response(206, "Partial Content", extra_headers={
+        "Content-Type": content_type,
+        "ETag": "\"" + etag + "\"",
+        "Content-Length": (end - start + 1L).to_string(),
+        "Content-Range": "bytes " +
+        start.to_string() +
+        "-" +
+        end.to_string() +
+        "/" +
+        size.to_string(),
+        "Accept-Ranges": "bytes",
+        "Access-Control-Allow-Origin": config.cors_origin,
+      })
+      let mut position = start
+      while position <= end {
+        let remaining = end - position + 1L
+        let length = if remaining > 65536L { 65536 } else { remaining.to_int() }
+        conn.write(file.read_exactly_at(length, position~))
+        position += length.to_int64()
+      }
+      conn.end_response()
+      return
+    }
+  }
   conn.send_response(200, "OK", extra_headers={
     "Content-Type": content_type,
     "ETag": "\"" + etag + "\"",
-    "Content-Length": file.size().to_string(),
+    "Content-Length": size.to_string(),
     "Accept-Ranges": "bytes",
     "Access-Control-Allow-Origin": config.cors_origin,
   })
@@ -630,7 +668,7 @@ async fn handle_request(
           match request.meth {
             Put =>
               put_object(config, request, name, object_key, request_body, conn)
-            Get => get_object(config, name, object_key, conn)
+            Get => get_object(config, request, name, object_key, conn)
             Head => head_object(config, name, object_key, conn)
             Delete => delete_object(config, name, object_key, conn)
             _ =>

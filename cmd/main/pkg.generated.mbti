@@ -1,12 +1,19 @@
 // Generated using `moon info`, DON'T EDIT IT
 package "Zz04321/moon-s3-server/cmd/main"
 
+import {
+  "moonbitlang/core/debug",
+}
+
 // Values
 
 // Errors
 
 // Types and methods
 type Config
+
+#derive(Eq, @debug.Debug)
+type DownloadRange
 
 // Type aliases
 
