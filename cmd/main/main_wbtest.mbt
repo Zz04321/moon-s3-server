@@ -73,3 +73,12 @@ test "list entries group directories and filter start-after in UTF-8 order" {
   assert_eq(list_entries(["aa", "z"], "", "", "aa"), [("z", false)])
   assert_eq(list_entries(["a::b", "a::c"], "", "::", ""), [("a::", true)])
 }
+
+///|
+test "list URL encoding protects XML control characters and preserves slashes" {
+  assert_eq(
+    list_xml_value("目录/a+b &\u0001.txt", true),
+    "%E7%9B%AE%E5%BD%95/a%2Bb%20%26%01.txt",
+  )
+  assert_eq(list_xml_value("a&b<c>", false), "a&amp;b&lt;c&gt;")
+}

@@ -18,6 +18,7 @@ MoonBit 已经有 S3 客户端，但没有可以直接部署的 S3 服务端。�
 | 建桶、删桶、列桶 | 已完成 |
 | PUT / GET / HEAD / DELETE 对象 | 已完成 |
 | ListObjectsV2 前缀、分页、delimiter / CommonPrefixes、start-after | 已完成 |
+| ListObjectsV2 URL 编码输出（encoding-type=url） | 已完成 |
 | CORS 预检和响应头 | 已完成 |
 | 可选 SigV4 Header 认证 | 已完成 |
 | MD5 ETag、Content-Type 元数据 | 已完成 |
@@ -141,6 +142,7 @@ python3 scripts/object_regression.py
 `max-keys` 最大为 1000；非法值和溢出的 continuation token 返回 `400 InvalidArgument`。
 `delimiter` 将子目录合并成 `CommonPrefixes`，每个目录和对象各占一个分页名额；`start-after` 按 UTF-8 字节顺序过滤对象和目录。
 目前 continuation token 是结果偏移量，翻页需保留相同的 prefix、delimiter 和 start-after；并发增删对象时不保证分页快照一致。
+对象名含控制字符时请使用 `encoding-type=url`：响应中的 Key、Prefix、Delimiter、StartAfter 和 CommonPrefixes 会进行 UTF-8 百分号编码（保留 `/`），并返回 `EncodingType=url`；客户端解码一次即可还原对象名。
 对象下载回归覆盖区间、跨块读取、越界、空文件和 HEAD。Range 仅用于 GET；格式错误、未知单位和多区间请求按完整下载处理。
 GET / HEAD 支持 `If-Match`（不匹配返回 412）和 `If-None-Match`（匹配返回 304），支持通配符和 ETag 列表。
 `If-Match` 使用强比较，`If-None-Match` 接受弱 ETag。`If-Range` 仅接受匹配的强 ETag，否则回退完整下载。

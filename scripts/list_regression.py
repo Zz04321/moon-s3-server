@@ -131,7 +131,27 @@ def main():
                 expected_entries = {(key.split("/")[0] + "/", True) if "/" in key else (key, False) for key in keys + extra_keys}
                 expected_entries = sorted((entry for entry in expected_entries if entry[0].encode() > b"aa"), key=lambda entry: entry[0].encode())
                 assert found == expected_entries, (found, expected_entries)
-                print("List regression passed: encoding, pagination, directory grouping and start-after.")
+                encoded_keys = ["编码/空 格+&.txt", "encoded/control\x01.txt", "encoded/percent%25.txt"]
+                for key in encoded_keys:
+                    path = "/regression-bucket/" + urllib.parse.quote(key, safe="/")
+                    assert request("PUT", path, b"data")[0] == 200
+                page = listing("encoding-type=url")
+                assert page.findtext("s3:EncodingType", namespaces=NAMESPACE) == "url"
+                encoded_names = [entry.text for entry in page.findall("s3:Contents/s3:Key", NAMESPACE)]
+                assert [urllib.parse.unquote(key) for key in encoded_names] == sorted(keys + extra_keys + encoded_keys, key=lambda key: key.encode())
+                assert "encoded/control%01.txt" in encoded_names
+                page = listing("encoding-type=url&prefix=" + urllib.parse.quote("编码/", safe=""))
+                assert page.findtext("s3:Prefix", namespaces=NAMESPACE) == "%E7%BC%96%E7%A0%81/"
+                assert page.findtext("s3:Contents/s3:Key", namespaces=NAMESPACE) == "%E7%BC%96%E7%A0%81/%E7%A9%BA%20%E6%A0%BC%2B%26.txt"
+                page = listing("encoding-type=url&delimiter=%2F&start-after=" + urllib.parse.quote("头像.txt", safe=""))
+                assert page.findtext("s3:StartAfter", namespaces=NAMESPACE) == urllib.parse.quote("头像.txt", safe="/")
+                assert page.findtext("s3:Delimiter", namespaces=NAMESPACE) == "/"
+                assert "%E7%BC%96%E7%A0%81/" in [entry.text for entry in page.findall("s3:CommonPrefixes/s3:Prefix", NAMESPACE)]
+                for value in ["", "xml", "URL"]:
+                    status, body = request("GET", "/regression-bucket?list-type=2&encoding-type=" + value)
+                    assert status == 400
+                    assert ET.fromstring(body).findtext("Code") == "InvalidArgument"
+                print("List regression passed: pagination, directories, start-after and URL-encoded control characters.")
             except BaseException:
                 server_log.seek(0)
                 print(server_log.read().decode(errors="replace"))

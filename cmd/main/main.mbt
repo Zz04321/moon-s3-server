@@ -535,6 +535,20 @@ async fn list_objects(
   }
   let delimiter = @core.query_value(params, "delimiter").unwrap_or("")
   let start_after = @core.query_value(params, "start-after").unwrap_or("")
+  let url_encoded = match @core.query_value(params, "encoding-type") {
+    None => false
+    Some("url") => true
+    Some(_) => {
+      send_error(
+        conn,
+        400,
+        "InvalidArgument",
+        "encoding-type must be url.",
+        config.cors_origin,
+      )
+      return
+    }
+  }
   let offset = match
     parse_list_number(@core.query_value(params, "continuation-token"), 0) {
     Some(value) => value
@@ -570,17 +584,24 @@ async fn list_objects(
     "<Name>" +
     @core.xml_escape(bucket) +
     "</Name><Prefix>" +
-    @core.xml_escape(prefix) +
+    list_xml_value(prefix, url_encoded) +
     "</Prefix><KeyCount>" +
     (end - start).to_string() +
     "</KeyCount><MaxKeys>" +
     max_keys.to_string() +
     "</MaxKeys>"
   if @core.query_value(params, "delimiter") is Some(_) {
-    body += "<Delimiter>" + @core.xml_escape(delimiter) + "</Delimiter>"
+    body += "<Delimiter>" +
+      list_xml_value(delimiter, url_encoded) +
+      "</Delimiter>"
   }
   if @core.query_value(params, "start-after") is Some(_) {
-    body += "<StartAfter>" + @core.xml_escape(start_after) + "</StartAfter>"
+    body += "<StartAfter>" +
+      list_xml_value(start_after, url_encoded) +
+      "</StartAfter>"
+  }
+  if url_encoded {
+    body += "<EncodingType>url</EncodingType>"
   }
   if @core.query_value(params, "continuation-token") is Some(token) {
     body += "<ContinuationToken>" +
@@ -599,14 +620,14 @@ async fn list_objects(
     let (key, common_prefix) = entries[i]
     if common_prefix {
       body += "<CommonPrefixes><Prefix>" +
-        @core.xml_escape(key) +
+        list_xml_value(key, url_encoded) +
         "</Prefix></CommonPrefixes>"
       continue
     }
     let path = object_file(config, bucket, key)
     let (etag, _) = object_meta(config, bucket, key)
     body += "<Contents><Key>" +
-      @core.xml_escape(key) +
+      list_xml_value(key, url_encoded) +
       "</Key>" +
       "<LastModified>1970-01-01T00:00:00.000Z</LastModified>" +
       "<ETag>\"" +

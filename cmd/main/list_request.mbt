@@ -42,3 +42,14 @@ fn list_entries(
   })
   entries
 }
+
+///|
+fn list_xml_value(value : String, url_encoded : Bool) -> String {
+  @core.xml_escape(
+    if url_encoded {
+      @core.uri_encode(value, allow_slash=true)
+    } else {
+      value
+    },
+  )
+}
