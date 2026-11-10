@@ -42,7 +42,7 @@ MoonBit 已经有 S3 客户端，但没有可以直接部署的 S3 服务端。�
 需要 MoonBit CLI（本仓库使用 `moon 0.1.20261102` 验证）。
 
 ```bash
-git clone https://github.com/zzSmall6/moon-s3-server.git
+git clone https://github.com/Zz04321/moon-s3-server.git
 cd moon-s3-server
 
 moon build cmd/main --target native

@@ -5,7 +5,7 @@
 - 项目名称：moon-s3-server
 - 参赛者：Zz04321
 - 联系方式：13234314917
-- 仓库：https://github.com/zzSmall6/moon-s3-server
+- 仓库：https://github.com/Zz04321/moon-s3-server
 - 项目方向：新生态项目建设 / 对象存储服务端
 - 许可证：Apache-2.0
 - 仓库提交：开发期保持 20 个以上有效提交，覆盖服务端、控制台、命令行、测试、文档和发布流程

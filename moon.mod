@@ -15,7 +15,7 @@ version = "0.1.0"
 
 readme = "README.mbt.md"
 
-repository = "https://github.com/zzSmall6/moon-s3-server"
+repository = "https://github.com/Zz04321/moon-s3-server"
 
 license = "Apache-2.0"
 
