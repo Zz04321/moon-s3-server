@@ -117,6 +117,10 @@ fn authorize(
                 "" => @core.sha256_hex(body.clamped_view())
                 value => value
               }
+              if payload_hash != "UNSIGNED-PAYLOAD" &&
+                payload_hash != @core.sha256_hex(body.clamped_view()) {
+                return false
+              }
               @core.verify_sigv4(
                 method_name(request.meth),
                 raw_path,

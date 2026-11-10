@@ -136,6 +136,7 @@ moon fmt
 ```bash
 python3 scripts/list_regression.py
 python3 scripts/object_regression.py
+python3 scripts/auth_regression.py
 ```
 
 覆盖 UTF-8 对象名与排序、加号前缀、多页遍历、空页和非法分页参数。
@@ -147,6 +148,8 @@ python3 scripts/object_regression.py
 GET / HEAD 支持 `If-Match`（不匹配返回 412）和 `If-None-Match`（匹配返回 304），支持通配符和 ETag 列表。
 `If-Match` 使用强比较，`If-None-Match` 接受弱 ETag。`If-Range` 仅接受匹配的强 ETag，否则回退完整下载。
 日期条件和写入条件暂不支持。
+认证回归使用 Python 标准库生成 SigV4 签名，验证上传、下载、列表和篡改拒绝。
+启用认证时，`x-amz-content-sha256` 必须与实际请求体一致；支持 `UNSIGNED-PAYLOAD`，暂不支持 AWS 分块签名上传。
 
 测试不依赖外部数据库或 Docker。完整接口验证见 `scripts/smoke.sh`，CI 配置见 `.github/workflows/ci.yml`。
 
