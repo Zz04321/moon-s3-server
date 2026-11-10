@@ -150,6 +150,8 @@ GET / HEAD 支持 `If-Match`（不匹配返回 412）和 `If-None-Match`（匹�
 日期条件和写入条件暂不支持。
 认证回归使用 Python 标准库生成 SigV4 签名，验证上传、下载、列表和篡改拒绝。
 启用认证时，`x-amz-content-sha256` 必须与实际请求体一致；支持 `UNSIGNED-PAYLOAD`，暂不支持 AWS 分块签名上传。
+签名头必须包含 host 和 x-amz-date，使用小写名称并按字典序排列，不能重复或引用缺失头；签名日期必须与凭证日期一致。
+当前尚未限制签名时间窗口，临时链接和防重放时间校验待补齐。
 
 测试不依赖外部数据库或 Docker。完整接口验证见 `scripts/smoke.sh`，CI 配置见 `.github/workflows/ci.yml`。
 

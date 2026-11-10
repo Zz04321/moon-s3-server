@@ -105,6 +105,25 @@ def main():
                 assert signed("PUT", path, b"unsigned", payload_hash="UNSIGNED-PAYLOAD")[0] == 200
                 assert signed("GET", path) == (200, b"unsigned")
                 assert signed("GET", "/auth-bucket?list-type=2&prefix=folder%2F&max-keys=1")[0] == 200
+                for names in [
+                    ["x-amz-content-sha256", "x-amz-date"],
+                    ["host", "x-amz-content-sha256"],
+                    ["host", "x-amz-date", "x-amz-content-sha256"],
+                    ["host", "host", "x-amz-date"],
+                    ["host", "x-amz-date", "x-missing"],
+                    ["Host", "x-amz-date"],
+                ]:
+                    assert signed("GET", path, signed_headers=names)[0] == 403, names
+                assert signed("GET", path, signed_headers=["host", "x-amz-date"])[0] == 200
+                for date in ["20261110", "20261110T120000", "20261110X120000Z", "20261110T12000xZ"]:
+                    assert signed("GET", path, date=date)[0] == 403, date
+                assert signed("GET", path, scope_date="20000101")[0] == 403
+                query_path = "/auth-bucket?list-type=2&max-keys=1"
+                headers = sign("GET", query_path, host)
+                assert request("GET", query_path.replace("max-keys=1", "max-keys=2"), headers=headers)[0] == 403
+                assert request("GET", "/auth-bucket/another-key", headers=sign("GET", path, host))[0] == 403
+                assert request("DELETE", path, headers=sign("GET", path, host))[0] == 403
+                assert signed("GET", path) == (200, b"unsigned")
                 print("Auth regression passed: signed requests, payload integrity and tampering rejection.")
             except BaseException:
                 server_log.seek(0)

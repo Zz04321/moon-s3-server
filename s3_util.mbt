@@ -335,13 +335,67 @@ pub fn verify_sigv4(
       if auth.access_key != access_key.to_owned() || auth.service != "s3" {
         return false
       }
+      if auth.region.is_empty() || auth.signature.length() != 64 {
+        return false
+      }
+      for digit in auth.signature.to_array() {
+        if !((digit >= '0' && digit <= '9') || (digit >= 'a' && digit <= 'f')) {
+          return false
+        }
+      }
+      let mut previous = ""
+      let mut has_host = false
+      let mut has_date = false
+      for name in auth.signed_headers.split(";") {
+        if name.is_empty() || previous[:].lexical_compare(name) >= 0 {
+          return false
+        }
+        for character in name.to_owned().to_array() {
+          if !((character >= 'a' && character <= 'z') ||
+            (character >= '0' && character <= '9') ||
+            character == '-') {
+            return false
+          }
+        }
+        let mut present = false
+        for (header_name, value) in signed_header_pairs {
+          if header_name[:] == name && !value.trim().is_empty() {
+            present = true
+          }
+        }
+        if !present {
+          return false
+        }
+        if name == "host" {
+          has_host = true
+        }
+        if name == "x-amz-date" {
+          has_date = true
+        }
+        previous = name.to_owned()
+      }
+      if !has_host || !has_date {
+        return false
+      }
       let mut amz_date : String = ""
       for pair in signed_header_pairs {
         if pair.0 == "x-amz-date" {
           amz_date = pair.1
         }
       }
-      if amz_date.is_empty() || amz_date.length() < 8 {
+      if amz_date.length() != 16 ||
+        amz_date[8:9] != "T" ||
+        amz_date[15:16] != "Z" {
+        return false
+      }
+      for index in 0..<amz_date.length() {
+        if index != 8 &&
+          index != 15 &&
+          (amz_date[index] < '0' || amz_date[index] > '9') {
+          return false
+        }
+      }
+      if amz_date[:8] != auth.date {
         return false
       }
       let canonical_header_text = canonical_headers(
@@ -381,7 +435,12 @@ pub fn verify_sigv4(
         Bytes::from_array(key[:]).clamped_view(),
         @utf8.encode(string_to_sign).clamped_view(),
       )
-      expected == auth.signature
+      let mut difference = 0
+      for index in 0..<expected.length() {
+        difference = difference |
+          (expected[index].to_int() ^ auth.signature[index].to_int())
+      }
+      difference == 0
     }
   }
 }
