@@ -383,21 +383,25 @@ async fn delete_bucket(
 }
 
 ///|
-fn parse_int_or(value : String?, fallback : Int32) -> Int32 {
+fn parse_list_number(value : String?, fallback : Int32) -> Int32? {
   match value {
-    None => fallback
+    None => Some(fallback)
     Some(text) => {
       if text.is_empty() {
-        return fallback
+        return None
       }
       let mut result = 0
-      for c in text.to_array() {
-        if c < '0' || c > '9' {
-          return fallback
+      for digit in text.to_array() {
+        if digit < '0' || digit > '9' {
+          return None
         }
-        result = result * 10 + c.to_int() - '0'.to_int()
+        let value = digit.to_int() - '0'.to_int()
+        if result > (2147483647 - value) / 10 {
+          return None
+        }
+        result = result * 10 + value
       }
-      result
+      Some(result)
     }
   }
 }
@@ -424,8 +428,34 @@ async fn list_objects(
     Some(value) => value
     None => ""
   }
-  let max_keys = parse_int_or(@core.query_value(params, "max-keys"), 1000)
-  let offset = parse_int_or(@core.query_value(params, "continuation-token"), 0)
+  let max_keys = match
+    parse_list_number(@core.query_value(params, "max-keys"), 1000) {
+    Some(value) => if value > 1000 { 1000 } else { value }
+    None => {
+      send_error(
+        conn,
+        400,
+        "InvalidArgument",
+        "max-keys must be a non-negative integer.",
+        config.cors_origin,
+      )
+      return
+    }
+  }
+  let offset = match
+    parse_list_number(@core.query_value(params, "continuation-token"), 0) {
+    Some(value) => value
+    None => {
+      send_error(
+        conn,
+        400,
+        "InvalidArgument",
+        "The continuation token is invalid.",
+        config.cors_origin,
+      )
+      return
+    }
+  }
   let keys : Array[String] = []
   for entry in @fs.readdir(dir, include_hidden=false, sort=true) {
     if entry.has_suffix(".object") {
@@ -435,12 +465,16 @@ async fn list_objects(
       }
     }
   }
-  keys.sort()
+  keys.sort_by((left, right) => {
+    @utf8.encode(left)
+    .clamped_view()
+    .lexical_compare(@utf8.encode(right).clamped_view())
+  })
   let start = if offset < keys.length() { offset } else { keys.length() }
-  let end = if start + max_keys < keys.length() {
-    start + max_keys
-  } else {
+  let end = if max_keys >= keys.length() - start {
     keys.length()
+  } else {
+    start + max_keys
   }
   let mut body = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" +
     "<ListBucketResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\">" +
@@ -453,7 +487,7 @@ async fn list_objects(
     "</KeyCount><MaxKeys>" +
     max_keys.to_string() +
     "</MaxKeys>"
-  let truncated = end < keys.length()
+  let truncated = max_keys > 0 && end < keys.length()
   let truncated_text = if truncated { "true" } else { "false" }
   body += "<IsTruncated>" + truncated_text + "</IsTruncated>"
   if truncated {

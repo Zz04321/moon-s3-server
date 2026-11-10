@@ -120,6 +120,15 @@ moon build cmd/main --target native
 moon fmt
 ```
 
+列表分页回归测试（需要 Python 3 标准库，不需要额外安装依赖）：
+
+```bash
+python3 scripts/list_regression.py
+```
+
+覆盖 UTF-8 对象名与排序、加号前缀、多页遍历、空页和非法分页参数。
+`max-keys` 最大为 1000；非法值和溢出的 continuation token 返回 `400 InvalidArgument`。
+
 测试不依赖外部数据库或 Docker。完整接口验证见 `scripts/smoke.sh`，CI 配置见 `.github/workflows/ci.yml`。
 
 ## 路线图
