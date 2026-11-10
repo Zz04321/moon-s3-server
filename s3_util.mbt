@@ -16,24 +16,25 @@ pub(all) struct ParsedAuth {
 
 ///|
 pub fn percent_decode(input : StringView) -> String {
-  let chars = input.to_owned().to_array()
+  let chars = @utf8.encode(input.to_owned())
   let out : Array[Byte] = []
   let mut i = 0
   while i < chars.length() {
     let c = chars[i]
-    if c == '%' && i + 2 < chars.length() {
-      match (hex_digit(chars[i + 1]), hex_digit(chars[i + 2])) {
+    if c == b'%' && i + 2 < chars.length() {
+      match
+        (hex_digit(chars[i + 1].to_char()), hex_digit(chars[i + 2].to_char())) {
         (Some(high), Some(low)) => {
           out.push((high * 16 + low).to_byte())
           i += 3
         }
         _ => {
-          out.push(c.to_int().to_byte())
+          out.push(c)
           i += 1
         }
       }
     } else {
-      out.push(c.to_int().to_byte())
+      out.push(c)
       i += 1
     }
   }
@@ -85,15 +86,12 @@ pub fn query_pairs(query : StringView) -> Array[QueryParam] {
         Some(pair) => {
           let (name, value) = pair
           result.push(QueryParam::{
-            name: percent_decode(name).replace(old="+", new=" "),
-            value: percent_decode(value).replace(old="+", new=" "),
+            name: percent_decode(name),
+            value: percent_decode(value),
           })
         }
         None =>
-          result.push(QueryParam::{
-            name: percent_decode(part).replace(old="+", new=" "),
-            value: "",
-          })
+          result.push(QueryParam::{ name: percent_decode(part), value: "", })
       }
     }
   }
@@ -112,12 +110,19 @@ pub fn query_value(params : Array[QueryParam], name : StringView) -> String? {
 
 ///|
 pub fn canonical_query(params : Array[QueryParam]) -> String {
-  let encoded : Array[String] = []
+  let encoded : Array[(String, String)] = []
   for param in params {
-    encoded.push(uri_encode(param.name) + "=" + uri_encode(param.value))
+    encoded.push((uri_encode(param.name), uri_encode(param.value)))
   }
-  encoded.sort_by((a, b) => if a < b { -1 } else if a > b { 1 } else { 0 })
-  encoded.join("&")
+  encoded.sort_by((left, right) => {
+    let order = left.0[:].lexical_compare(right.0[:])
+    if order == 0 {
+      left.1[:].lexical_compare(right.1[:])
+    } else {
+      order
+    }
+  })
+  encoded.map(pair => pair.0 + "=" + pair.1).join("&")
 }
 
 ///|

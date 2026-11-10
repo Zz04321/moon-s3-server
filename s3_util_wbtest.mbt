@@ -1,6 +1,13 @@
 ///|
 test "percent decoding and object-name round trip" {
   assert_eq(percent_decode("hello%20world%2Fdemo"), "hello world/demo")
+  assert_eq(percent_decode("头像/文件.txt"), "头像/文件.txt")
+  assert_eq(
+    percent_decode("头像/%E6%96%87%E4%BB%B6.txt"),
+    "头像/文件.txt",
+  )
+  assert_eq(percent_decode("a+b%2Bc"), "a+b+c")
+  assert_eq(percent_decode("bad%2X%"), "bad%2X%")
   let key = "folder/头像 1.txt"
   let filename = key_to_filename(key)
   assert_eq(filename_to_key(filename), Some(key))
@@ -20,6 +27,22 @@ test "query parameters are decoded and sorted for signatures" {
   let params = query_pairs("prefix=photos%2F&list-type=2&max-keys=10")
   assert_eq(query_value(params, "prefix"), Some("photos/"))
   assert_eq(canonical_query(params), "list-type=2&max-keys=10&prefix=photos%2F")
+}
+
+///|
+test "S3 query canonicalization preserves literal and encoded plus signs" {
+  let params = query_pairs("prefix=a+b%2Bc%20d&%2B=+&empty")
+  assert_eq(query_value(params, "prefix"), Some("a+b+c d"))
+  assert_eq(query_value(params, "+"), Some("+"))
+  assert_eq(canonical_query(params), "%2B=%2B&empty=&prefix=a%2Bb%2Bc%20d")
+  assert_eq(
+    canonical_query(query_pairs("z=1&aa=2&a=z&a=aa")),
+    "a=aa&a=z&aa=2&z=1",
+  )
+  assert_eq(
+    split_bucket_key("/photos/头像%2B1.txt"),
+    (Some("photos"), Some("头像+1.txt")),
+  )
 }
 
 ///|
