@@ -7,3 +7,4 @@ target
 data/
 *.tmp
 __pycache__/
+/docs/proposal.md
