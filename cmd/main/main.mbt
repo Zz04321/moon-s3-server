@@ -261,18 +261,24 @@ async fn check_read_precondition(
   config : Config,
   request : @http.Request,
   etag : String,
+  modified : Int64,
   conn : @http.ServerConnection,
 ) -> Bool {
   let status = read_precondition(
     header(request.headers, "if-match"),
     header(request.headers, "if-none-match"),
     etag,
+    if_modified_since=header(request.headers, "if-modified-since"),
+    if_unmodified_since=header(request.headers, "if-unmodified-since"),
+    modified~,
   )
   if status == 200 {
     return true
   }
   let headers : Map[@http.CaseInsensitiveString, String] = {
     "ETag": "\"" + etag + "\"",
+    "Last-Modified": http_time(modified),
+    "Access-Control-Expose-Headers": "ETag, Last-Modified, Content-Range, Accept-Ranges",
     "Access-Control-Allow-Origin": config.cors_origin,
   }
   let error_body = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>PreconditionFailed</Code><Message>At least one precondition failed.</Message><RequestId>moon-s3-server</RequestId></Error>"
@@ -318,12 +324,13 @@ async fn get_object(
   let (etag, content_type) = object_meta(config, bucket, key)
   let file = @fs.open(path, mode=ReadOnly)
   defer file.close()
-  if !check_read_precondition(config, request, etag, conn) {
+  let modified = file.mtime().0
+  if !check_read_precondition(config, request, etag, modified, conn) {
     return
   }
   let size = file.size()
   let if_range = header(request.headers, "if-range")
-  let selected_range = if if_range.is_empty() || if_range == "\"" + etag + "\"" {
+  let selected_range = if if_range_matches(if_range, etag, modified) {
     download_range(header(request.headers, "range"), size)
   } else {
     Full
@@ -341,6 +348,8 @@ async fn get_object(
     }
     Partial(start, end) => {
       conn.send_response(206, "Partial Content", extra_headers={
+        "Last-Modified": http_time(modified),
+        "Access-Control-Expose-Headers": "ETag, Last-Modified, Content-Range, Accept-Ranges",
         "Content-Type": content_type,
         "ETag": "\"" + etag + "\"",
         "Content-Length": (end - start + 1L).to_string(),
@@ -365,6 +374,8 @@ async fn get_object(
     }
   }
   conn.send_response(200, "OK", extra_headers={
+    "Last-Modified": http_time(modified),
+    "Access-Control-Expose-Headers": "ETag, Last-Modified, Content-Range, Accept-Ranges",
     "Content-Type": content_type,
     "ETag": "\"" + etag + "\"",
     "Content-Length": size.to_string(),
@@ -392,13 +403,18 @@ async fn head_object(
     return
   }
   let (etag, content_type) = object_meta(config, bucket, key)
-  if !check_read_precondition(config, request, etag, conn) {
+  let file = @fs.open(path, mode=ReadOnly)
+  defer file.close()
+  let modified = file.mtime().0
+  if !check_read_precondition(config, request, etag, modified, conn) {
     return
   }
   conn.send_response(200, "OK", extra_headers={
+    "Last-Modified": http_time(modified),
+    "Access-Control-Expose-Headers": "ETag, Last-Modified, Content-Range, Accept-Ranges",
     "Content-Type": content_type,
     "ETag": "\"" + etag + "\"",
-    "Content-Length": @fs.file_size(path).to_string(),
+    "Content-Length": file.size().to_string(),
     "Accept-Ranges": "bytes",
     "Access-Control-Allow-Origin": config.cors_origin,
   })
@@ -449,6 +465,7 @@ async fn create_bucket(
   }
   @fs.mkdir(path, recursive=true, allow_exist=true)
   @fs.mkdir(objects_dir(config, bucket), recursive=true, allow_exist=true)
+  @fs.write_file(path + "/.created", (@env.now() / 1000UL).to_string())
   conn.send_response(200, "OK", extra_headers={
     "Access-Control-Allow-Origin": config.cors_origin,
   })
@@ -650,7 +667,9 @@ async fn list_objects(
     body += "<Contents><Key>" +
       list_xml_value(key, url_encoded) +
       "</Key>" +
-      "<LastModified>1970-01-01T00:00:00.000Z</LastModified>" +
+      "<LastModified>" +
+      iso_time(file_modified(path)) +
+      "</LastModified>" +
       "<ETag>\"" +
       etag +
       "\"</ETag><Size>" +
@@ -669,7 +688,9 @@ async fn list_buckets(config : Config, conn : @http.ServerConnection) -> Unit {
     if @core.valid_bucket_name(name) {
       body += "<Bucket><Name>" +
         @core.xml_escape(name) +
-        "</Name><CreationDate>1970-01-01T00:00:00.000Z</CreationDate></Bucket>"
+        "</Name><CreationDate>" +
+        iso_time(bucket_created(config, name)) +
+        "</CreationDate></Bucket>"
     }
   }
   body += "</Buckets></ListAllMyBucketsResult>"

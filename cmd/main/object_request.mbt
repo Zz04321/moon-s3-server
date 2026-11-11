@@ -96,11 +96,24 @@ fn read_precondition(
   if_match : StringView,
   if_none_match : StringView,
   etag : String,
+  if_modified_since~ : StringView = "",
+  if_unmodified_since~ : StringView = "",
+  modified~ : Int64 = 0L,
 ) -> Int32 {
   if !if_match.is_empty() && !etag_matches(if_match, etag, weak=false) {
     return 412
   }
+  if if_match.is_empty() &&
+    parse_http_time(if_unmodified_since) is Some(date) &&
+    modified > date {
+    return 412
+  }
   if !if_none_match.is_empty() && etag_matches(if_none_match, etag, weak=true) {
+    return 304
+  }
+  if if_none_match.is_empty() &&
+    parse_http_time(if_modified_since) is Some(date) &&
+    modified <= date {
     return 304
   }
   200

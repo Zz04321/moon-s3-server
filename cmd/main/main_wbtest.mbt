@@ -126,3 +126,88 @@ test "presigned expiry uses its lifetime instead of the header signing window" {
     assert_false(presigned_time_valid("20240301T000000Z", expires, now))
   }
 }
+
+///|
+test "object times format in UTC and reject invalid HTTP dates" {
+  let epoch = 0L
+  assert_eq(iso_time(epoch), "1970-01-01T00:00:00.000Z")
+  assert_eq(http_time(epoch), "Thu, 01 Jan 1970 00:00:00 GMT")
+  let leap = @time.PlainDateTime::of(2024, 2, 29, hour=12, minute=34, second=56).to_unix_second()
+  assert_eq(iso_time(leap), "2024-02-29T12:34:56.000Z")
+  assert_eq(http_time(leap), "Thu, 29 Feb 2024 12:34:56 GMT")
+  assert_eq(parse_http_time(http_time(leap)), Some(leap))
+  for
+    date in [
+      "", "invalid", "Wed, 29 Feb 2024 12:34:56 GMT", "Thu, 29 Feb 2023 12:34:56 GMT",
+      "Thu, 29 Feb 2024 24:34:56 GMT", "Thu, 29 Feb 2024 12:34:56 UTC",
+    ] {
+    assert_eq(parse_http_time(date), None)
+  }
+}
+
+///|
+test "date conditions have second precision and ETag conditions take precedence" {
+  let modified = @time.PlainDateTime::of(2024, 2, 29).to_unix_second()
+  let before = http_time(modified - 1L)
+  let equal = http_time(modified)
+  let after = http_time(modified + 1L)
+  assert_eq(
+    read_precondition("", "", "abc", if_modified_since=before, modified~),
+    200,
+  )
+  assert_eq(
+    read_precondition("", "", "abc", if_modified_since=equal, modified~),
+    304,
+  )
+  assert_eq(
+    read_precondition("", "", "abc", if_modified_since=after, modified~),
+    304,
+  )
+  assert_eq(
+    read_precondition("", "", "abc", if_unmodified_since=before, modified~),
+    412,
+  )
+  assert_eq(
+    read_precondition("", "", "abc", if_unmodified_since=equal, modified~),
+    200,
+  )
+  assert_eq(
+    read_precondition("", "", "abc", if_unmodified_since=after, modified~),
+    200,
+  )
+  assert_eq(
+    read_precondition(
+      "\"abc\"",
+      "",
+      "abc",
+      if_unmodified_since=before,
+      modified~,
+    ),
+    200,
+  )
+  assert_eq(
+    read_precondition(
+      "",
+      "\"other\"",
+      "abc",
+      if_modified_since=after,
+      modified~,
+    ),
+    200,
+  )
+  assert_eq(
+    read_precondition(
+      "",
+      "",
+      "abc",
+      if_unmodified_since="invalid",
+      if_modified_since="invalid",
+      modified~,
+    ),
+    200,
+  )
+  assert_true(if_range_matches(equal, "abc", modified))
+  assert_false(if_range_matches(before, "abc", modified))
+  assert_false(if_range_matches(after, "abc", modified))
+  assert_false(if_range_matches("invalid", "abc", modified))
+}

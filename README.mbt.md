@@ -25,7 +25,8 @@ MoonBit 已经有 S3 客户端，但没有可以直接部署的 S3 服务端。�
 | botocore 预签名 GET / HEAD / PUT 互通 | 已验证（1.44.0） |
 | MD5 ETag、Content-Type 元数据 | 已完成 |
 | 单区间 Range 下载（指定区间、起点、末尾字节） | 已完成 |
-| GET / HEAD 的 ETag 条件请求、ETag If-Range | 已完成 |
+| GET / HEAD 的 ETag 与日期条件请求、ETag / 日期 If-Range | 已完成 |
+| 对象 Last-Modified、列表 LastModified、持久化桶创建时间 | 已完成 |
 | AWS CLI / MinIO `mc` 互通 | 待补充自动测试 |
 
 ## 当前边界
@@ -33,8 +34,7 @@ MoonBit 已经有 S3 客户端，但没有可以直接部署的 S3 服务端。�
 现在**还不是**完整的 S3 实现：
 
 - 没有 Multipart Upload；大文件目前一次请求读完，适合中小文件和开发测试；
-- 没有按日期判断的条件请求；多区间 Range 请求暂按完整下载处理；
-- `LastModified` 暂时是固定占位值；
+- 多区间 Range 请求暂按完整下载处理；HTTP 日期目前接受 IMF-fixdate 格式（例如 `Thu, 29 Feb 2024 12:34:56 GMT`）；
 - 没有版本控制、生命周期、IAM/ACL、对象锁和服务端加密；
 - 没有 Web 控制台、备份命令和事件通知；
 - TLS 不内置，生产部署请放在 Nginx/Caddy 等反向代理后面。
@@ -131,7 +131,7 @@ curl --noproxy '*' "$DOWNLOAD_URL" -o downloaded.png
 ```
 
 支持 GET、HEAD 和 PUT；HTTP 方法、对象路径、host 和查询参数均受签名保护。有效期为 1–604800 秒（最长 7 天，默认 15 分钟）；到期立即失效，签发时间最多允许比服务器快 15 分钟。
-GET 链接支持 Range 和 ETag 条件读取，HEAD 需单独签名。PUT 使用 `UNSIGNED-PAYLOAD`；需要约束 Content-Type 等请求头时，可通过 SDK 将它们加入 SignedHeaders，调用时必须原样提供。
+GET 链接支持 Range、ETag 和日期条件读取，HEAD 需单独签名。PUT 使用 `UNSIGNED-PAYLOAD`；需要约束 Content-Type 等请求头时，可通过 SDK 将它们加入 SignedHeaders，调用时必须原样提供。
 浏览器可直接 `fetch(url)` 或 `fetch(url, {method: 'PUT', body: file})`；预检沿用 `MOON_S3_CORS_ORIGIN` 配置。
 链接在有效期内可重复使用，PUT 可覆盖同名对象；需要提前撤销时可更换服务端密钥，所有旧链接会同时失效。
 请使用客户端实际访问的 endpoint 生成链接；反向代理须保留原始路径、查询参数和 host。
@@ -175,8 +175,13 @@ python3 scripts/presigned_regression.py
 对象名含控制字符时请使用 `encoding-type=url`：响应中的 Key、Prefix、Delimiter、StartAfter 和 CommonPrefixes 会进行 UTF-8 百分号编码（保留 `/`），并返回 `EncodingType=url`；客户端解码一次即可还原对象名。
 对象下载回归覆盖区间、跨块读取、越界、空文件和 HEAD。Range 仅用于 GET；格式错误、未知单位和多区间请求按完整下载处理。
 GET / HEAD 支持 `If-Match`（不匹配返回 412）和 `If-None-Match`（匹配返回 304），支持通配符和 ETag 列表。
-`If-Match` 使用强比较，`If-None-Match` 接受弱 ETag。`If-Range` 仅接受匹配的强 ETag，否则回退完整下载。
-日期条件和写入条件暂不支持。
+`If-Match` 使用强比较，`If-None-Match` 接受弱 ETag。`If-Range` 支持匹配的强 ETag 或 Last-Modified 日期，否则回退完整下载。
+GET / HEAD 也支持 `If-Modified-Since`（未更新返回 304）和 `If-Unmodified-Since`（已更新返回 412），按 UTC 整秒比较；无效日期忽略。
+`If-None-Match` 优先于 `If-Modified-Since`，`If-Match` 优先于 `If-Unmodified-Since`。
+`If-Range` 可使用上次响应中的 Last-Modified 日期，只有时间完全一致时返回区间，否则完整下载。写入条件暂不支持。
+对象时间来自内容文件的磁盘 mtime，覆盖上传会更新，GET、HEAD 和列表读取不会更新；响应包含 Last-Modified，列表使用 UTC ISO 时间。
+新桶在 `.created` 中保存创建时间，不随上传和重启变化；旧桶无此文件时使用目录 mtime 作为兼容回退，不能还原历史创建时间。
+浏览器可读取 CORS 暴露的 ETag、Last-Modified、Content-Range 和 Accept-Ranges 响应头。
 认证回归使用 Python 标准库生成 SigV4 签名，验证上传、下载、列表和篡改拒绝。
 启用认证时，`x-amz-content-sha256` 必须与实际请求体一致；支持 `UNSIGNED-PAYLOAD`，暂不支持 AWS 分块签名上传。
 签名头必须包含 host 和 x-amz-date，使用小写名称并按字典序排列，不能重复或引用缺失头；签名日期必须与凭证日期一致。
@@ -188,7 +193,7 @@ GET / HEAD 支持 `If-Match`（不匹配返回 412）和 `If-None-Match`（匹�
 
 ## 路线图
 
-1. 补 Multipart Upload、日期条件请求和真实 `LastModified`；
+1. 补 Multipart Upload 和崩溃恢复能力；
 2. 补稳定的错误码；
 3. 用 AWS CLI、MinIO `mc` 和 Ceph `s3-tests` 子集做互通测试；
 4. 增加管理命令行、Web 控制台、备份恢复和事件通知；

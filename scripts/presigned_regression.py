@@ -161,7 +161,7 @@ def main():
                     client = botocore.session.get_session().create_client(
                         "s3", endpoint_url=endpoint, region_name="us-east-1",
                         aws_access_key_id=ACCESS_KEY, aws_secret_access_key=SECRET_KEY,
-                        config=botocore.config.Config(signature_version="s3v4", s3={"addressing_style": "path"}),
+                        config=botocore.config.Config(signature_version="s3v4", s3={"addressing_style": "path"}, proxies={}),
                     )
                     try:
                         sdk_key = "sdk/头像 +%&.txt"
@@ -172,6 +172,12 @@ def main():
                         assert request("GET", sdk_download)[2] == b"sdk contents"
                         sdk_head = client.generate_presigned_url("head_object", Params=parameters, ExpiresIn=600)
                         assert request("HEAD", sdk_head)[0] == 200
+                        metadata = client.head_object(**parameters)
+                        modified = metadata["LastModified"]
+                        assert modified.year > 1970
+                        sdk_conditional = client.generate_presigned_url("get_object", Params=parameters, ExpiresIn=600)
+                        assert request("GET", sdk_conditional, headers={"If-Modified-Since": metadata["ResponseMetadata"]["HTTPHeaders"]["last-modified"]})[0] == 304
+                        assert client.head_object(**parameters, IfUnmodifiedSince=modified)["ResponseMetadata"]["HTTPStatusCode"] == 200
                         assert request("PUT", sdk_upload, b"bad contents", {"Content-Type": "application/json"})[0] == 403
                         assert request("GET", sdk_download)[2] == b"sdk contents"
                         print("Botocore interoperability passed: presigned GET, HEAD and signed Content-Type PUT.")
