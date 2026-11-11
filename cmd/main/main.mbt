@@ -100,6 +100,17 @@ fn authorize(
       match config.secret_key {
         None => false
         Some(secret_key) => {
+          if has_query_auth(params) {
+            return authorize_presigned(
+              request,
+              raw_path,
+              params,
+              body,
+              access_key,
+              secret_key,
+              (@env.now() / 1000UL).reinterpret_as_int64(),
+            )
+          }
           if !signature_time_valid(
               header(request.headers, "x-amz-date"),
               (@env.now() / 1000UL).reinterpret_as_int64(),

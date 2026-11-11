@@ -76,6 +76,12 @@ test "canonical headers preserve signed order and trim values" {
     canonical_headers("host;x-amz-date", headers),
     "host:example.com\nx-amz-date:20130524T000000Z\n",
   )
+  assert_eq(
+    canonical_headers("x-amz-meta-title", [
+      ("x-amz-meta-title", "  hello\t world   again  "),
+    ]),
+    "x-amz-meta-title:hello world again\n",
+  )
 }
 
 ///|

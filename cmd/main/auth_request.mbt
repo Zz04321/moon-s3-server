@@ -1,14 +1,14 @@
 ///|
-fn signature_time_valid(value : String, now : Int64) -> Bool {
+fn signature_timestamp(value : String) -> Int64? {
   if value.length() != 16 || value[8:9] != "T" || value[15:16] != "Z" {
-    return false
+    return None
   }
   let parts : Array[Int32] = []
   for (start, end) in [(0, 4), (4, 6), (6, 8), (9, 11), (11, 13), (13, 15)] {
     let mut number = 0
     for digit in value[start:end].to_owned().to_array() {
       if digit < '0' || digit > '9' {
-        return false
+        return None
       }
       number = number * 10 + digit.to_int() - '0'.to_int()
     }
@@ -22,10 +22,33 @@ fn signature_time_valid(value : String, now : Int64) -> Bool {
     minute=parts[4],
     second=parts[5],
   ) catch {
-    _ => return false
+    _ => return None
   }
-  let timestamp = date.to_unix_second()
-  timestamp >= now - 900L && timestamp <= now + 900L
+  Some(date.to_unix_second())
+}
+
+///|
+fn signature_time_valid(value : String, now : Int64) -> Bool {
+  match signature_timestamp(value) {
+    Some(timestamp) => timestamp >= now - 900L && timestamp <= now + 900L
+    None => false
+  }
+}
+
+///|
+fn presigned_time_valid(date : String, expires : String, now : Int64) -> Bool {
+  let timestamp = match signature_timestamp(date) {
+    Some(timestamp) => timestamp
+    None => return false
+  }
+  let lifetime = match parse_list_number(Some(expires), 0) {
+    Some(seconds) => seconds
+    None => return false
+  }
+  lifetime >= 1 &&
+  lifetime <= 604800 &&
+  timestamp <= now + 900L &&
+  now < timestamp + lifetime.to_int64()
 }
 
 ///|

@@ -313,7 +313,13 @@ pub fn canonical_headers(
         value = pair.1
       }
     }
-    out += wanted + ":" + value.trim().to_owned() + "\n"
+    let words : Array[String] = []
+    for word in value.replace_all(old="\t", new=" ").split(" ") {
+      if !word.is_empty() {
+        words.push(word.to_owned())
+      }
+    }
+    out += wanted + ":" + words.join(" ") + "\n"
   }
   out
 }

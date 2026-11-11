@@ -2,7 +2,7 @@
 
 用 MoonBit 写的小型 S3 兼容对象存储服务。目标不是复刻 MinIO，而是给 MoonBit 应用、CI 和本地私有化场景一个**开箱能跑、数据放在自己磁盘上**的存储底座。
 
-> 当前版本是 `v0.1 bootstrap`。核心读写链路已经可用，但还不是生产级实现。分段上传、预签名 URL、版本控制和控制台在路线图中，详见下方“当前边界”。
+> 当前版本是 `v0.1 bootstrap`。核心读写链路和预签名 URL 已经可用，但还不是生产级实现。分段上传、版本控制和控制台在路线图中，详见下方“当前边界”。
 
 ## 为什么做这个
 
@@ -21,6 +21,8 @@ MoonBit 已经有 S3 客户端，但没有可以直接部署的 S3 服务端。�
 | ListObjectsV2 URL 编码输出（encoding-type=url） | 已完成 |
 | CORS 预检和响应头 | 已完成 |
 | 可选 SigV4 Header 认证 | 已完成 |
+| SigV4 预签名 URL（临时 GET / HEAD / PUT） | 已完成 |
+| botocore 预签名 GET / HEAD / PUT 互通 | 已验证（1.44.0） |
 | MD5 ETag、Content-Type 元数据 | 已完成 |
 | 单区间 Range 下载（指定区间、起点、末尾字节） | 已完成 |
 | GET / HEAD 的 ETag 条件请求、ETag If-Range | 已完成 |
@@ -31,7 +33,7 @@ MoonBit 已经有 S3 客户端，但没有可以直接部署的 S3 服务端。�
 现在**还不是**完整的 S3 实现：
 
 - 没有 Multipart Upload；大文件目前一次请求读完，适合中小文件和开发测试；
-- 没有 Presigned URL 和按日期判断的条件请求；多区间 Range 请求暂按完整下载处理；
+- 没有按日期判断的条件请求；多区间 Range 请求暂按完整下载处理；
 - `LastModified` 暂时是固定占位值；
 - 没有版本控制、生命周期、IAM/ACL、对象锁和服务端加密；
 - 没有 Web 控制台、备份命令和事件通知；
@@ -107,9 +109,34 @@ bash scripts/smoke.sh
 | `MOON_S3_ACCESS_KEY` | 未设置 | 设置后启用 SigV4 Header 认证 |
 | `MOON_S3_SECRET_KEY` | 未设置 | 与 Access Key 成对使用 |
 
-开启认证后，客户端需要正确设置 endpoint 和签名；当前不支持浏览器预签名 URL。
+开启认证后，客户端需要正确设置 endpoint 和签名，也可以使用预签名 URL 临时授权对象上传或下载。
 开发时建议先不设置密钥，确认读写链路正常后再开认证。
 两项密钥必须同时设置且非空，或同时不设置；缺失任意一项、空白密钥或无效监听地址会使进程以非零状态退出。
+
+## 临时上传和下载链接
+
+先为服务端和签名工具配置相同的 `MOON_S3_ACCESS_KEY`、`MOON_S3_SECRET_KEY`（工具也接受 `AWS_ACCESS_KEY_ID`、`AWS_SECRET_ACCESS_KEY`），并通过认证请求创建桶。
+链接生成工具只需要 Python 3 标准库，在本地生成签名，无需把密钥传给链接使用者：
+
+```bash
+# 为 avatars 桶生成 10 分钟有效的上传链接
+UPLOAD_URL=$(python3 scripts/presign.py avatars 'demo/头像 1.png' \
+  --endpoint http://127.0.0.1:9000 --method PUT --expires 600)
+curl --noproxy '*' -X PUT --data-binary @avatar.png "$UPLOAD_URL"
+
+# 生成同一对象的临时下载链接
+DOWNLOAD_URL=$(python3 scripts/presign.py avatars 'demo/头像 1.png' \
+  --endpoint http://127.0.0.1:9000 --expires 600)
+curl --noproxy '*' "$DOWNLOAD_URL" -o downloaded.png
+```
+
+支持 GET、HEAD 和 PUT；HTTP 方法、对象路径、host 和查询参数均受签名保护。有效期为 1–604800 秒（最长 7 天，默认 15 分钟）；到期立即失效，签发时间最多允许比服务器快 15 分钟。
+GET 链接支持 Range 和 ETag 条件读取，HEAD 需单独签名。PUT 使用 `UNSIGNED-PAYLOAD`；需要约束 Content-Type 等请求头时，可通过 SDK 将它们加入 SignedHeaders，调用时必须原样提供。
+浏览器可直接 `fetch(url)` 或 `fetch(url, {method: 'PUT', body: file})`；预检沿用 `MOON_S3_CORS_ORIGIN` 配置。
+链接在有效期内可重复使用，PUT 可覆盖同名对象；需要提前撤销时可更换服务端密钥，所有旧链接会同时失效。
+请使用客户端实际访问的 endpoint 生成链接；反向代理须保留原始路径、查询参数和 host。
+当前支持静态密钥的 SigV4 对象链接，不支持 STS 安全令牌、浏览器 POST 表单上传和下载响应头覆盖参数。未启用服务端认证时，请求仍按匿名模式处理，链接不提供访问控制。
+使用 AWS SDK 时选择 SigV4 和 path-style；已使用 botocore 1.44.0 验证 `get_object`、`head_object` 和带 Content-Type 签名的 `put_object` 链接。
 
 ## 数据布局
 
@@ -138,6 +165,7 @@ moon fmt
 python3 scripts/list_regression.py
 python3 scripts/object_regression.py
 python3 scripts/auth_regression.py
+python3 scripts/presigned_regression.py
 ```
 
 覆盖 UTF-8 对象名与排序、加号前缀、多页遍历、空页和非法分页参数。
@@ -153,13 +181,15 @@ GET / HEAD 支持 `If-Match`（不匹配返回 412）和 `If-None-Match`（匹�
 启用认证时，`x-amz-content-sha256` 必须与实际请求体一致；支持 `UNSIGNED-PAYLOAD`，暂不支持 AWS 分块签名上传。
 签名头必须包含 host 和 x-amz-date，使用小写名称并按字典序排列，不能重复或引用缺失头；签名日期必须与凭证日期一致。
 签名时间与服务器时间的偏差最多为 15 分钟，过期、未来偏差过大或无效日期的请求返回 403。部署时需保持服务器与客户端时钟同步；窗口内的重复请求仍可重放。
+预签名回归覆盖 GET / HEAD / PUT、范围下载、过期、有效期边界、路径和签名篡改、重复/缺失参数、签名请求头、CORS 预检与生成工具。
+如果 Python 环境已安装 botocore，可运行 `python3 scripts/presigned_regression.py --sdk`，额外验证 AWS SDK 生成的链接；默认回归只依赖 Python 标准库。
 
 测试不依赖外部数据库或 Docker。完整接口验证见 `scripts/smoke.sh`，CI 配置见 `.github/workflows/ci.yml`。
 
 ## 路线图
 
 1. 补 Multipart Upload、日期条件请求和真实 `LastModified`；
-2. 补 Presigned URL 和稳定的错误码；
+2. 补稳定的错误码；
 3. 用 AWS CLI、MinIO `mc` 和 Ceph `s3-tests` 子集做互通测试；
 4. 增加管理命令行、Web 控制台、备份恢复和事件通知；
 5. 增加版本控制、Docker 镜像、发布流程和更多崩溃恢复测试。

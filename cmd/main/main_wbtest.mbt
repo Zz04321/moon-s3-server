@@ -109,3 +109,20 @@ test "credentials must be configured together with non-empty values" {
   assert_false(valid_credentials(Some("access"), Some(" \t")))
   assert_false(valid_credentials(Some(""), Some("")))
 }
+
+///|
+test "presigned expiry uses its lifetime instead of the header signing window" {
+  let now = @time.PlainDateTime::of(2024, 3, 1).to_unix_second()
+  assert_true(presigned_time_valid("20240229T000000Z", "604800", now))
+  assert_true(presigned_time_valid("20240301T001500Z", "60", now))
+  assert_false(presigned_time_valid("20240301T001501Z", "60", now))
+  assert_true(presigned_time_valid("20240229T235900Z", "61", now))
+  assert_false(presigned_time_valid("20240229T235900Z", "60", now))
+  assert_false(presigned_time_valid("20230229T000000Z", "604800", now))
+  for
+    expires in [
+      "", "0", "-1", "604801", "1.5", "2147483648", "99999999999999999",
+    ] {
+    assert_false(presigned_time_valid("20240301T000000Z", expires, now))
+  }
+}
