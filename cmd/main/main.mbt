@@ -5,6 +5,9 @@ struct Config {
   access_key : String?
   secret_key : String?
   cors_origin : String
+  mutation_lock : @async.Mutex
+  multipart_ttl : Int64
+  mut multipart_cleanup_at : Int64
 }
 
 ///|
@@ -25,6 +28,11 @@ fn load_config() -> Config {
     access_key,
     secret_key,
     cors_origin: env_or("MOON_S3_CORS_ORIGIN", "*"),
+    mutation_lock: @async.Mutex(),
+    multipart_ttl: range_number(
+      env_or("MOON_S3_MULTIPART_TTL_SECONDS", "604800"),
+    ).unwrap_or(0L),
+    multipart_cleanup_at: 0L,
   }
 }
 
@@ -504,6 +512,18 @@ async fn delete_bucket(
     )
     return
   }
+  let uploads = bucket_dir(config, bucket) + "/.uploads"
+  if @fs.exists(uploads) &&
+    !@fs.readdir(uploads, include_hidden=false).is_empty() {
+    send_error(
+      conn,
+      409,
+      "BucketNotEmpty",
+      "The bucket has incomplete multipart uploads.",
+      config.cors_origin,
+    )
+    return
+  }
   @fs.rmdir(dir, recursive=true, allow_missing=true)
   conn.send_response(204, "No Content", extra_headers={
     "Access-Control-Allow-Origin": config.cors_origin,
@@ -715,7 +735,7 @@ async fn handle_request(
   if method_name(request.meth) == "OPTIONS" {
     conn.send_response(204, "No Content", extra_headers={
       "Access-Control-Allow-Origin": config.cors_origin,
-      "Access-Control-Allow-Methods": "GET,PUT,HEAD,DELETE,OPTIONS",
+      "Access-Control-Allow-Methods": "GET,PUT,POST,HEAD,DELETE,OPTIONS",
       "Access-Control-Allow-Headers": "*",
       "Access-Control-Max-Age": "600",
     })
@@ -734,6 +754,15 @@ async fn handle_request(
     return
   }
   let (bucket, key) = @core.split_bucket_key(raw_path)
+  let multipart = is_multipart_request(params)
+  let locked = multipart ||
+    request.meth is Put ||
+    request.meth is Post ||
+    request.meth is Delete
+  if locked {
+    config.mutation_lock.acquire()
+  }
+  defer (if locked { config.mutation_lock.release() })
   match bucket {
     None =>
       if request.meth is Get {
@@ -756,6 +785,21 @@ async fn handle_request(
           "The bucket name is not valid.",
           config.cors_origin,
         )
+        return
+      }
+      if multipart {
+        handle_multipart(config, request, name, key, params, request_body, conn) catch {
+          error => {
+            println("multipart request failed: \{error}")
+            send_error(
+              conn,
+              500,
+              "InternalError",
+              "The multipart operation could not be completed.",
+              config.cors_origin,
+            )
+          }
+        }
         return
       }
       match key {
@@ -820,6 +864,10 @@ async fn handle_request(
 ///|
 async fn main {
   let config = load_config()
+  if config.multipart_ttl < 1L || config.multipart_ttl > 31536000L {
+    println("MOON_S3_MULTIPART_TTL_SECONDS must be between 1 and 31536000.")
+    @env.exit(1)
+  }
   if !valid_credentials(config.access_key, config.secret_key) {
     println(
       "MOON_S3_ACCESS_KEY and MOON_S3_SECRET_KEY must both be set and non-empty, or both unset.",
@@ -827,6 +875,7 @@ async fn main {
     @env.exit(1)
   }
   @fs.mkdir(config.root, recursive=true, allow_exist=true)
+  cleanup_multipart(config)
   let listen = @socket.Addr::parse(config.listen) catch {
     _ => {
       println("invalid MOON_S3_LISTEN: \{config.listen}")

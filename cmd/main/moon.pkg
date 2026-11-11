@@ -8,6 +8,7 @@ import {
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/env",
   "moonbitlang/x/time",
+  "moonbitlang/x/crypto",
 }
 
 supported_targets = "+native"
