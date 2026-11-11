@@ -142,6 +142,22 @@ def main():
                 except subprocess.TimeoutExpired:
                     server.kill()
                     server.wait()
+        binary = str(PROJECT / "_build/native/debug/build/cmd/main/main.exe")
+        for access, secret in [(ACCESS_KEY, None), (None, SECRET_KEY), ("", SECRET_KEY), (ACCESS_KEY, " "), ("", "")]:
+            invalid = dict(environment)
+            for name, value in [("MOON_S3_ACCESS_KEY", access), ("MOON_S3_SECRET_KEY", secret)]:
+                if value is None:
+                    invalid.pop(name, None)
+                else:
+                    invalid[name] = value
+            result = subprocess.run([binary], env=invalid, capture_output=True, timeout=5)
+            assert result.returncode != 0, (access, secret, result.stdout)
+            assert b"must both be set" in result.stdout
+        invalid = dict(environment, MOON_S3_LISTEN="invalid-address")
+        result = subprocess.run([binary], env=invalid, capture_output=True, timeout=5)
+        assert result.returncode != 0
+        assert b"invalid MOON_S3_LISTEN" in result.stdout
+        print("Startup regression passed: incomplete credentials and invalid listen addresses fail fast.")
 
 
 if __name__ == "__main__":

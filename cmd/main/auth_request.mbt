@@ -27,3 +27,13 @@ fn signature_time_valid(value : String, now : Int64) -> Bool {
   let timestamp = date.to_unix_second()
   timestamp >= now - 900L && timestamp <= now + 900L
 }
+
+///|
+fn valid_credentials(access_key : String?, secret_key : String?) -> Bool {
+  match (access_key, secret_key) {
+    (None, None) => true
+    (Some(access), Some(secret)) =>
+      !access.trim().is_empty() && !secret.trim().is_empty()
+    _ => false
+  }
+}

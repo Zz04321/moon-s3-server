@@ -788,11 +788,17 @@ async fn handle_request(
 ///|
 async fn main {
   let config = load_config()
+  if !valid_credentials(config.access_key, config.secret_key) {
+    println(
+      "MOON_S3_ACCESS_KEY and MOON_S3_SECRET_KEY must both be set and non-empty, or both unset.",
+    )
+    @env.exit(1)
+  }
   @fs.mkdir(config.root, recursive=true, allow_exist=true)
   let listen = @socket.Addr::parse(config.listen) catch {
     _ => {
       println("invalid MOON_S3_LISTEN: \{config.listen}")
-      return
+      @env.exit(1)
     }
   }
   println("moon-s3-server listening on \{config.listen}, root=\{config.root}")

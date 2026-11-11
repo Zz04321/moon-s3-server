@@ -98,3 +98,14 @@ test "signature time window validates calendar dates and exact boundaries" {
     assert_false(signature_time_valid(date, now))
   }
 }
+
+///|
+test "credentials must be configured together with non-empty values" {
+  assert_true(valid_credentials(None, None))
+  assert_true(valid_credentials(Some("access"), Some("secret")))
+  assert_false(valid_credentials(Some("access"), None))
+  assert_false(valid_credentials(None, Some("secret")))
+  assert_false(valid_credentials(Some(""), Some("secret")))
+  assert_false(valid_credentials(Some("access"), Some(" \t")))
+  assert_false(valid_credentials(Some(""), Some("")))
+}
