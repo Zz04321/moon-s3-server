@@ -100,6 +100,12 @@ fn authorize(
       match config.secret_key {
         None => false
         Some(secret_key) => {
+          if !signature_time_valid(
+              header(request.headers, "x-amz-date"),
+              (@env.now() / 1000UL).reinterpret_as_int64(),
+            ) {
+            return false
+          }
           let auth_value = header(request.headers, "authorization")
           if auth_value.is_empty() {
             return false

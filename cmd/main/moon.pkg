@@ -7,6 +7,7 @@ import {
   "moonbitlang/async/socket",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/env",
+  "moonbitlang/x/time",
 }
 
 supported_targets = "+native"

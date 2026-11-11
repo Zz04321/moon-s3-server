@@ -82,3 +82,19 @@ test "list URL encoding protects XML control characters and preserves slashes" {
   )
   assert_eq(list_xml_value("a&b<c>", false), "a&amp;b&lt;c&gt;")
 }
+
+///|
+test "signature time window validates calendar dates and exact boundaries" {
+  let now = @time.PlainDateTime::of(2024, 3, 1).to_unix_second()
+  for date in ["20240229T234500Z", "20240301T000000Z", "20240301T001500Z"] {
+    assert_true(signature_time_valid(date, now))
+  }
+  for
+    date in [
+      "20240229T234459Z", "20240301T001501Z", "20230229T000000Z", "20241301T000000Z",
+      "20240431T000000Z", "20240301T240000Z", "20240301T006000Z", "20240301T000060Z",
+      "20240301T00000xZ", "20240301",
+    ] {
+    assert_false(signature_time_valid(date, now))
+  }
+}

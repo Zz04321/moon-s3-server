@@ -118,6 +118,12 @@ def main():
                 for date in ["20261110", "20261110T120000", "20261110X120000Z", "20261110T12000xZ"]:
                     assert signed("GET", path, date=date)[0] == 403, date
                 assert signed("GET", path, scope_date="20000101")[0] == 403
+                now = datetime.datetime.now(datetime.timezone.utc)
+                for minutes, expected in [(-16, 403), (16, 403), (-14, 200), (14, 200)]:
+                    date = (now + datetime.timedelta(minutes=minutes)).strftime("%Y%m%dT%H%M%SZ")
+                    assert signed("GET", path, date=date)[0] == expected
+                for date in ["20260230T120000Z", "20261301T120000Z", "20261111T250000Z"]:
+                    assert signed("GET", path, date=date)[0] == 403
                 query_path = "/auth-bucket?list-type=2&max-keys=1"
                 headers = sign("GET", query_path, host)
                 assert request("GET", query_path.replace("max-keys=1", "max-keys=2"), headers=headers)[0] == 403
