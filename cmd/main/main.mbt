@@ -867,7 +867,19 @@ async fn handle_request(
           }
           match request.meth {
             Put =>
-              put_object(config, request, name, object_key, request_body, conn)
+              if request.headers.contains(
+                  @http.CaseInsensitiveString("x-amz-copy-source"),
+                ) {
+                copy_object(
+                  config, request, name, object_key, request_body, conn,
+                ) catch {
+                  error => storage_error(config, conn, error)
+                }
+              } else {
+                put_object(
+                  config, request, name, object_key, request_body, conn,
+                )
+              }
             Get => get_object(config, request, name, object_key, conn)
             Head => head_object(config, request, name, object_key, conn)
             Delete => delete_object(config, name, object_key, conn)

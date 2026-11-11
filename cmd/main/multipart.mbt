@@ -534,6 +534,16 @@ async fn handle_multipart(
   body : Bytes,
   conn : @http.ServerConnection,
 ) -> Unit {
+  if request.headers.contains(@http.CaseInsensitiveString("x-amz-copy-source")) {
+    send_error(
+      conn,
+      501,
+      "NotImplemented",
+      "Multipart part copying is not supported.",
+      config.cors_origin,
+    )
+    return
+  }
   match key {
     Some(key) => recover_object(config, bucket, key)
     None => recover_bucket(config, bucket)

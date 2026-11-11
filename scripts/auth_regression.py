@@ -19,12 +19,13 @@ SECRET_KEY = "regression-secret"
 
 
 def sign(method, path, host, body=b"", payload_hash=None, secret=SECRET_KEY,
-         signed_headers=None, date=None, scope_date=None):
+         signed_headers=None, date=None, scope_date=None, extra_headers=None):
     date = date or datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     scope_date = scope_date or date[:8]
     payload_hash = payload_hash or hashlib.sha256(body).hexdigest()
     headers = {"host": host, "x-amz-date": date, "x-amz-content-sha256": payload_hash}
-    names = signed_headers or ["host", "x-amz-content-sha256", "x-amz-date"]
+    headers.update({name.lower(): value for name, value in (extra_headers or {}).items()})
+    names = signed_headers or sorted(headers)
     raw_path, _, query = path.partition("?")
     pairs = []
     for part in filter(None, query.split("&")):

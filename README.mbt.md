@@ -12,6 +12,7 @@ path-style URLs.
 - Optional SigV4 authentication and presigned GET / HEAD / PUT URLs.
 - Multipart uploads with resumable parts, pagination, abort, and expiration.
 - Range downloads, conditional reads, ETags, and Content-Type metadata.
+- Server-side CopyObject across buckets, with source conditions and COPY / REPLACE Content-Type.
 - Write/delete transaction recovery, consistent concurrent reads, and a data directory lock.
 - CORS and a `GET /healthz` endpoint.
 
@@ -65,6 +66,8 @@ checksums (`request_checksum_calculation="when_required"` and
 `response_checksum_validation="when_required"` in botocore).
 For temporary links, configure matching credentials and use
 `python3 scripts/presign.py --help`.
+Use the SDK's `copy_object` operation to copy without downloading; copy headers
+must be signed when authentication is enabled.
 
 ## Limits and recovery
 
@@ -81,6 +84,8 @@ For temporary links, configure matching credentials and use
   backup commands yet. Only single-range downloads are supported.
 - No STS tokens, AWS streaming signatures, extra checksums, UploadPartCopy,
   or delimiter grouping for multipart upload listings.
+- CopyObject supports sources up to 5 GiB and Content-Type metadata only;
+  version IDs, tags, ACLs, and custom metadata are unsupported.
 
 ## Development
 
@@ -88,13 +93,13 @@ For temporary links, configure matching credentials and use
 moon test --target native
 moon info && moon fmt
 bash scripts/smoke.sh
-for suite in auth list object presigned multipart storage; do
+for suite in auth list object presigned multipart storage copy; do
   python3 "scripts/${suite}_regression.py"
 done
 ```
 
 Regression scripts use Python's standard library. With botocore installed,
-add `--sdk` to the presigned or multipart regression script for SDK checks.
+add `--sdk` to the presigned, multipart, or copy regression script for SDK checks.
 
 ## License
 
