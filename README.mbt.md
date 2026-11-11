@@ -25,6 +25,7 @@ MoonBit 已经有 S3 客户端，但没有可以直接部署的 S3 服务端。�
 | botocore 预签名 GET / HEAD / PUT 互通 | 已验证（1.44.0） |
 | 分段上传：创建、上传/覆盖分片、列表分页、合并、取消 | 已完成 |
 | 分段上传重启续传、过期清理、分段 ETag | 已完成 |
+| 对象写入/删除事务日志、启动恢复、并发读取一致性 | 已完成 |
 | botocore 分段上传与 100 MiB 完整性校验 | 已验证（1.44.0） |
 | MD5 ETag、Content-Type 元数据 | 已完成 |
 | 单区间 Range 下载（指定区间、起点、末尾字节） | 已完成 |
@@ -37,7 +38,7 @@ MoonBit 已经有 S3 客户端，但没有可以直接部署的 S3 服务端。�
 现在**还不是**完整的 S3 实现：
 
 - 支持 Multipart Upload，但每个上传请求体（普通 PUT 或单个分片）仍一次读入内存；请选择适合可用内存的分片大小，合并和下载按块处理；
-- 对象内容与元数据分别替换，崩溃时两者的事务一致性仍待完善；一个数据目录只支持一个服务进程；
+- 单个数据目录只支持一个服务进程，启动时使用文件锁阻止重复打开；故障恢复已验证进程异常退出，断电和磁盘硬件故障仍需专项验证；
 - 多区间 Range 请求暂按完整下载处理；HTTP 日期目前接受 IMF-fixdate 格式（例如 `Thu, 29 Feb 2024 12:34:56 GMT`）；
 - 没有版本控制、生命周期、IAM/ACL、对象锁和服务端加密；
 - 没有 Web 控制台、备份命令和事件通知；
@@ -197,6 +198,7 @@ client.close()
 
 ```text
 data/
+  .lock                        # 服务进程持有的数据目录锁
   avatars/                     # bucket
     .uploads/
       <upload-id>/
@@ -205,9 +207,16 @@ data/
     objects/
       64656d6f2f68656c6c6f2e747874.object   # 文件内容，key 用十六进制编码
       64656d6f2f68656c6c6f2e747874.meta     # ETag、Content-Type
+      <key-hex>.object.pending             # 事务提交前的完整内容
+      <key-hex>.meta.pending               # 事务提交前的元数据
+      <key-hex>.object.txn                 # 已提交、待完成的事务记录
 ```
 
-对象 key 会被编码成安全文件名，避免路径穿越和特殊字符问题。写入先落到 `.tmp`，再原子替换目标文件。
+对象 key 会被编码成安全文件名，避免路径穿越和特殊字符问题。普通 PUT 和分段合并都先写入 `.pending` 文件并同步，再持久化事务记录，最后替换内容与元数据。删除也先记录事务，再移除文件。响应成功前同步相关文件与目录。
+
+服务启动后、监听请求前会恢复未完成事务：存在有效 `.txn` 时继续提交，只有临时文件时丢弃临时写入并保留原对象。分段合并事务还会清理对应的上传目录；重复恢复不会重复创建对象。事务记录损坏或必要数据缺失时启动失败，并保留现场供检查。已有 `.object` / `.meta` 文件无需迁移。
+运行期间遇到存储错误返回 `500 InternalError`；已提交但尚未应用完成的事务会在后续访问时重试恢复。未收到成功响应的写入可能已经提交，客户端应查询对象后决定是否重试。GET 在锁内取得文件句柄及匹配元数据，随后释放锁传输，允许下载期间并发覆盖而不混用新旧内容与 ETag；HEAD 和列表与写入互斥。
+当前恢复依赖本地文件系统的原子重命名、文件锁和文件/目录同步语义，已在 Linux 上验证；不支持共享数据目录的多个进程或绕过服务直接修改数据文件。备份时仍需停止服务或使用一致的文件系统快照。
 
 ## 开发
 
@@ -226,6 +235,7 @@ python3 scripts/object_regression.py
 python3 scripts/auth_regression.py
 python3 scripts/presigned_regression.py
 python3 scripts/multipart_regression.py
+python3 scripts/storage_regression.py
 ```
 
 覆盖 UTF-8 对象名与排序、加号前缀、多页遍历、空页和非法分页参数。
@@ -249,12 +259,13 @@ GET / HEAD 也支持 `If-Modified-Since`（未更新返回 304）和 `If-Unmodif
 预签名回归覆盖 GET / HEAD / PUT、范围下载、过期、有效期边界、路径和签名篡改、重复/缺失参数、签名请求头、CORS 预检与生成工具。
 如果 Python 环境已安装 botocore，可运行 `python3 scripts/presigned_regression.py --sdk`，额外验证 AWS SDK 生成的链接；默认回归只依赖 Python 标准库。
 分段回归覆盖错误码、失败合并保留原对象、分片覆盖、分页、并发上传、强制停止后续传、取消和过期清理。运行 `python3 scripts/multipart_regression.py --sdk` 可额外验证 botocore 完整生命周期、100 MiB 分段上传后的 SHA-256 校验与跨分片 Range 下载。
+存储回归覆盖提交前中断、内容/元数据替换的各个中间状态、删除中断、分段合并恢复、真实 PUT 过程中强制结束服务、并发覆盖时的 GET/HEAD/列表一致性、磁盘操作失败、损坏事务拒绝启动及数据目录进程锁。
 
 测试不依赖外部数据库或 Docker。完整接口验证见 `scripts/smoke.sh`，CI 配置见 `.github/workflows/ci.yml`。
 
 ## 路线图
 
-1. 完善写入崩溃恢复、内容与元数据的事务一致性；
+1. 增加断电、磁盘故障和更多异常恢复验证；
 2. 补稳定的错误码；
 3. 用 AWS CLI、MinIO `mc` 和 Ceph `s3-tests` 子集做互通测试；
 4. 增加管理命令行、Web 控制台、备份恢复和事件通知；

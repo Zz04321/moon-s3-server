@@ -371,15 +371,21 @@ async fn complete_upload(
     file.write_reader(part)
   }
   file.sync()
-  let staged_meta = directory + "/assembled.meta"
-  @fs.write_file(
-    staged_meta,
-    "etag=" + etag + "\ncontent-type=" + upload.content_type + "\n",
-    sync=Full,
+  prepare_object(config, bucket, upload.key)
+  @fs.rename(
+    assembled,
+    object_file(config, bucket, upload.key) + ".pending",
+    replace=true,
   )
-  @fs.rename(assembled, object_file(config, bucket, upload.key), replace=true)
-  @fs.rename(staged_meta, meta_file(config, bucket, upload.key), replace=true)
-  @fs.rmdir(directory, recursive=true, allow_missing=true)
+  sync_directory(directory)
+  commit_object(
+    config,
+    bucket,
+    upload.key,
+    etag,
+    upload.content_type,
+    upload_id=upload.id,
+  )
   send_xml(
     conn,
     200,
@@ -528,6 +534,10 @@ async fn handle_multipart(
   body : Bytes,
   conn : @http.ServerConnection,
 ) -> Unit {
+  match key {
+    Some(key) => recover_object(config, bucket, key)
+    None => recover_bucket(config, bucket)
+  }
   cleanup_multipart(config)
   let seen : Map[String, Bool] = Map([])
   for param in params {

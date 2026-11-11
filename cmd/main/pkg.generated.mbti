@@ -17,6 +17,9 @@ type DownloadRange
 
 type MultipartUpload
 
+#derive(Eq, @debug.Debug)
+type StorageTransaction
+
 // Type aliases
 
 // Traits

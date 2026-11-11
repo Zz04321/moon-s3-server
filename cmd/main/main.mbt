@@ -210,22 +210,8 @@ async fn object_meta(
   if !(@fs.exists(path) catch { _ => false }) {
     return ("", "application/octet-stream")
   }
-  let text = read_text(path)
+  let text = @utf8.decode_lossy(@fs.read_file(path).binary().clamped_view())
   (meta_value(text, "etag"), meta_value(text, "content-type"))
-}
-
-///|
-async fn write_object_meta(
-  config : Config,
-  bucket : String,
-  key : String,
-  etag : String,
-  content_type : String,
-) -> Unit {
-  let path = meta_file(config, bucket, key)
-  let temp = path + ".tmp"
-  @fs.write_file(temp, "etag=" + etag + "\ncontent-type=" + content_type + "\n")
-  @fs.rename(temp, path, replace=true)
 }
 
 ///|
@@ -252,11 +238,20 @@ async fn put_object(
     "" => "application/octet-stream"
     value => value
   }
-  let path = object_file(config, bucket, key)
-  let temp = path + ".tmp"
-  @fs.write_file(temp, body)
-  @fs.rename(temp, path, replace=true)
-  write_object_meta(config, bucket, key, etag, content_type)
+  try {
+    prepare_object(config, bucket, key)
+    @fs.write_file(
+      object_file(config, bucket, key) + ".pending",
+      body,
+      sync=Full,
+    )
+    commit_object(config, bucket, key, etag, content_type)
+  } catch {
+    error => {
+      storage_error(config, conn, error)
+      return
+    }
+  }
   conn.send_response(200, "OK", extra_headers={
     "ETag": "\"" + etag + "\"",
     "Access-Control-Allow-Origin": config.cors_origin,
@@ -318,19 +313,25 @@ async fn get_object(
   key : String,
   conn : @http.ServerConnection,
 ) -> Unit {
-  let path = object_file(config, bucket, key)
-  if !@fs.exists(path) {
-    send_error(
-      conn,
-      404,
-      "NoSuchKey",
-      "The object does not exist.",
-      config.cors_origin,
-    )
-    return
+  let snapshot = open_object_snapshot(config, bucket, key) catch {
+    error => {
+      storage_error(config, conn, error)
+      return
+    }
   }
-  let (etag, content_type) = object_meta(config, bucket, key)
-  let file = @fs.open(path, mode=ReadOnly)
+  let (file, etag, content_type) = match snapshot {
+    Some(snapshot) => snapshot
+    None => {
+      send_error(
+        conn,
+        404,
+        "NoSuchKey",
+        "The object does not exist.",
+        config.cors_origin,
+      )
+      return
+    }
+  }
   defer file.close()
   let modified = file.mtime().0
   if !check_read_precondition(config, request, etag, modified, conn) {
@@ -402,6 +403,12 @@ async fn head_object(
   key : String,
   conn : @http.ServerConnection,
 ) -> Unit {
+  recover_object(config, bucket, key) catch {
+    error => {
+      storage_error(config, conn, error)
+      return
+    }
+  }
   let path = object_file(config, bucket, key)
   if !@fs.exists(path) {
     conn.send_response(404, "NotFound", extra_headers={
@@ -436,8 +443,17 @@ async fn delete_object(
   key : String,
   conn : @http.ServerConnection,
 ) -> Unit {
-  @fs.remove(object_file(config, bucket, key), allow_missing=true)
-  @fs.remove(meta_file(config, bucket, key), allow_missing=true)
+  if @fs.exists(objects_dir(config, bucket)) {
+    try {
+      prepare_object(config, bucket, key)
+      publish_transaction(config, bucket, key, "delete\n")
+    } catch {
+      error => {
+        storage_error(config, conn, error)
+        return
+      }
+    }
+  }
   conn.send_response(204, "No Content", extra_headers={
     "Access-Control-Allow-Origin": config.cors_origin,
   })
@@ -487,6 +503,12 @@ async fn delete_bucket(
   conn : @http.ServerConnection,
 ) -> Unit {
   let dir = bucket_dir(config, bucket)
+  recover_bucket(config, bucket) catch {
+    error => {
+      storage_error(config, conn, error)
+      return
+    }
+  }
   if !@fs.exists(dir) {
     send_error(
       conn,
@@ -562,6 +584,12 @@ async fn list_objects(
   params : Array[@core.QueryParam],
   conn : @http.ServerConnection,
 ) -> Unit {
+  recover_bucket(config, bucket) catch {
+    error => {
+      storage_error(config, conn, error)
+      return
+    }
+  }
   let dir = objects_dir(config, bucket)
   if !@fs.exists(dir) {
     send_error(
@@ -755,10 +783,7 @@ async fn handle_request(
   }
   let (bucket, key) = @core.split_bucket_key(raw_path)
   let multipart = is_multipart_request(params)
-  let locked = multipart ||
-    request.meth is Put ||
-    request.meth is Post ||
-    request.meth is Delete
+  let locked = multipart || !(request.meth is Get && key is Some(_))
   if locked {
     config.mutation_lock.acquire()
   }
@@ -875,6 +900,22 @@ async fn main {
     @env.exit(1)
   }
   @fs.mkdir(config.root, recursive=true, allow_exist=true)
+  let storage_lock = @fs.open(
+    config.root + "/.lock",
+    mode=ReadWrite,
+    create_mode=OpenOrCreate,
+  )
+  defer storage_lock.close()
+  if !storage_lock.try_lock(Exclusive) {
+    println("Data directory is already in use: \{config.root}")
+    @env.exit(1)
+  }
+  recover_storage(config) catch {
+    error => {
+      println("Storage recovery failed: \{error}")
+      @env.exit(1)
+    }
+  }
   cleanup_multipart(config)
   let listen = @socket.Addr::parse(config.listen) catch {
     _ => {
