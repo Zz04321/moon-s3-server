@@ -378,7 +378,7 @@ async fn complete_upload(
     replace=true,
   )
   sync_directory(directory)
-  commit_object(
+  let version = commit_object(
     config,
     bucket,
     upload.key,
@@ -386,6 +386,7 @@ async fn complete_upload(
     upload.content_type,
     upload_id=upload.id,
   )
+  conn.set_version(version)
   send_xml(
     conn,
     200,

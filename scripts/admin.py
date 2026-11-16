@@ -108,7 +108,7 @@ def scan(root):
     return entries
 
 
-def fields(path, expected):
+def fields(path, expected, optional=()):
     require(path.stat().st_size <= 65536, f"Metadata is too large: {path.name}")
     text = path.read_text(encoding="utf-8")
     values = {}
@@ -116,9 +116,9 @@ def fields(path, expected):
         if not line:
             continue
         name, separator, value = line.partition("=")
-        require(separator and name in expected and name not in values, f"Invalid metadata: {path.name}")
+        require(separator and name in (*expected, *optional) and name not in values, f"Invalid metadata: {path.name}")
         values[name] = value
-    require(set(values) == set(expected), f"Missing metadata fields: {path.name}")
+    require(set(expected) <= set(values), f"Missing metadata fields: {path.name}")
     return values
 
 
@@ -181,7 +181,7 @@ def inspect_storage(root, entries):
         buckets.add(bucket)
         if len(parts) == 1:
             require(record["kind"] == "directory", f"Bucket is not a directory: {name}")
-        elif len(parts) == 2 and parts[1] in ("objects", ".uploads"):
+        elif len(parts) == 2 and parts[1] in ("objects", ".uploads", ".versions"):
             require(record["kind"] == "directory", f"Expected a directory: {name}")
         elif len(parts) == 2 and parts[1] == ".created":
             require(record["kind"] == "file" and record["size"] <= 32, f"Invalid bucket creation time: {name}")
@@ -191,6 +191,18 @@ def inspect_storage(root, entries):
             validate_cors(root / name)
         elif len(parts) == 2 and parts[1] == ".cors.tmp":
             raise AdminError(f"Unfinished CORS update: {name}; start the server to recover, then stop it and retry")
+        elif len(parts) == 2 and parts[1] == ".versioning":
+            require(record["kind"] == "file" and record["size"] <= 9
+                    and (root / name).read_text() in ("Enabled", "Suspended"), f"Invalid versioning status: {name}")
+        elif len(parts) == 2 and parts[1] == ".versioning.tmp":
+            raise AdminError(f"Unfinished versioning update: {name}; start the server to recover, then stop it and retry")
+        elif len(parts) in (3, 4, 5) and parts[1] == ".versions":
+            require(valid_key(parts[2]), f"Invalid version key: {name}")
+            if len(parts) >= 4:
+                require(re.fullmatch(r"[0-9a-f]{64}", parts[3]), f"Unfinished or invalid version directory: {name}; start the server to recover")
+            require(record["kind"] == ("file" if len(parts) == 5 else "directory"), f"Invalid version storage entry: {name}")
+            if len(parts) == 5:
+                require(parts[4] in ("record", "content"), f"Unknown version file: {name}")
         elif len(parts) == 3 and parts[1] == "objects":
             filename = parts[2]
             require(record["kind"] == "file", f"Expected an object file: {name}")
@@ -201,7 +213,8 @@ def inspect_storage(root, entries):
             companion = f"{bucket}/objects/{encoded}." + ("meta" if suffix == "object" else "object")
             require(companion in entries, f"Missing object content or metadata: {name}")
             if suffix == "object":
-                metadata = fields(root / companion, ("etag", "content-type"))
+                metadata = fields(root / companion, ("etag", "content-type"), ("modified", "version-id"))
+                require(("modified" in metadata) == ("version-id" in metadata), f"Incomplete current version metadata: {companion}")
                 etag = metadata["etag"]
                 require(re.fullmatch(r"[0-9a-f]{32}(?:-[1-9][0-9]{0,4})?", etag), f"Invalid ETag: {companion}")
                 if "-" in etag:
@@ -232,8 +245,71 @@ def inspect_storage(root, entries):
             raise AdminError(f"Unknown storage path: {name}")
     for bucket in buckets:
         require(entries.get(f"{bucket}/objects", {}).get("kind") == "directory", f"Missing objects directory: {bucket}")
+    version_count = marker_count = 0
+    for name, entry in entries.items():
+        parts = safe_path(name).parts
+        if len(parts) != 3 or parts[1] != ".versions":
+            continue
+        bucket, _, encoded = parts
+        records = []
+        identities = set()
+        orders = set()
+        for version_path, version_entry in entries.items():
+            version_parts = safe_path(version_path).parts
+            if len(version_parts) != 4 or version_parts[:3] != parts:
+                continue
+            storage = version_parts[3]
+            record_path = version_path + "/record"
+            require(entries.get(record_path, {}).get("kind") == "file", f"Missing version record: {version_path}")
+            values = fields(root / record_path, ("version-id", "order", "delete-marker", "etag", "content-type", "modified"))
+            require(values["version-id"] in (storage, "null") and values["version-id"] not in identities, f"Invalid or duplicate version ID: {version_path}")
+            require(re.fullmatch(r"[0-9]{1,19}", values["order"]) and int(values["order"]) <= 9223372036854775807
+                    and str(int(values["order"])) == values["order"]
+                    and int(values["order"]) not in orders, f"Invalid version order: {version_path}")
+            require(re.fullmatch(r"[0-9]{1,19}", values["modified"]) and int(values["modified"]) <= 9223372036854775807, f"Invalid version time: {version_path}")
+            require(values["delete-marker"] in ("true", "false"), f"Invalid delete marker: {version_path}")
+            content = version_path + "/content"
+            if values["delete-marker"] == "true":
+                require(content not in entries and not values["etag"] and not values["content-type"], f"Invalid delete marker data: {version_path}")
+                marker_count += 1
+            else:
+                require(entries.get(content, {}).get("kind") == "file", f"Missing version content: {version_path}")
+                require(re.fullmatch(r"[0-9a-f]{32}(?:-[1-9][0-9]{0,4})?", values["etag"]), f"Invalid version ETag: {version_path}")
+                if "-" not in values["etag"]:
+                    require(digest_file(root / content, "md5") == values["etag"], f"Version MD5 mismatch: {version_path}")
+                else:
+                    require(int(values["etag"].rsplit("-", 1)[1]) <= 10000, f"Invalid version multipart ETag: {version_path}")
+                    warnings.append(f"Multipart ETag cannot be rederived without original parts: {version_path}")
+                version_count += 1
+            identities.add(values["version-id"])
+            orders.add(int(values["order"]))
+            records.append((int(values["order"]), content, values))
+        if not records:
+            continue
+        require(f"{bucket}/.versioning" in entries, f"Version history without bucket configuration: {name}")
+        _, content, latest = max(records, key=lambda record: record[0])
+        current = f"{bucket}/objects/{encoded}.object"
+        metadata = f"{bucket}/objects/{encoded}.meta"
+        if latest["delete-marker"] == "true":
+            require(current not in entries and metadata not in entries, f"Delete marker has a live current object: {name}")
+        else:
+            require(current in entries and metadata in entries, f"Missing current version cache: {name}")
+            values = fields(root / metadata, ("etag", "content-type"), ("modified", "version-id"))
+            require(("modified" in values) == ("version-id" in values), f"Incomplete current version metadata: {name}")
+            if "version-id" not in values:
+                require(latest["version-id"] == "null" and latest["order"] == "0"
+                        and (root / current).stat().st_mtime_ns // 1_000_000_000 == int(latest["modified"]),
+                        f"Unexpected legacy cache for version history: {name}")
+            require(all(values[field] == latest[field] for field in values), f"Current version metadata mismatch: {name}")
+            require(digest_file(root / current) == digest_file(root / content), f"Current version content mismatch: {name}")
+    for name in entries:
+        parts = safe_path(name).parts
+        if len(parts) == 3 and parts[1] == "objects" and parts[2].endswith(".meta"):
+            values = fields(root / name, ("etag", "content-type"), ("modified", "version-id"))
+            if "version-id" in values:
+                require(any(path.startswith(f"{parts[0]}/.versions/{parts[2][:-5]}/") and path.endswith("/record") for path in entries), f"Current version has no history: {name}")
     return {"buckets": len(buckets), "objects": objects, "uploads": uploads,
-            "object_bytes": total_bytes, "warnings": warnings}
+            "versions": version_count, "delete_markers": marker_count, "object_bytes": total_bytes, "warnings": warnings}
 
 
 def manifest_for(root, entries):

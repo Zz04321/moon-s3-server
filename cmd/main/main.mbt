@@ -245,7 +245,7 @@ async fn put_object(
       body,
       sync=Full,
     )
-    commit_object(config, bucket, key, etag, content_type)
+    conn.set_version(commit_object(config, bucket, key, etag, content_type))
   } catch {
     error => {
       storage_error(config, conn, error)
@@ -313,33 +313,28 @@ async fn get_object(
   key : String,
   conn : ResponseConnection,
 ) -> Unit {
-  let snapshot = open_object_snapshot(config, bucket, key) catch {
+  let snapshot = open_versioned_read(config, request, bucket, key, conn) catch {
     error => {
       storage_error(config, conn, error)
       return
     }
   }
-  let (file, etag, content_type) = match snapshot {
+  let snapshot = match snapshot {
     Some(snapshot) => snapshot
-    None => {
-      send_error(
-        conn,
-        404,
-        "NoSuchKey",
-        "The object does not exist.",
-        config.cors_origin,
-      )
-      return
-    }
+    None => return
   }
+  let file = snapshot.file
+  let etag = snapshot.etag
+  let content_type = snapshot.content_type
   defer file.close()
-  let modified = file.mtime().0
+  let modified = snapshot.modified
   if !check_read_precondition(config, request, etag, modified, conn) {
     return
   }
   let size = file.size()
   let if_range = header(request.headers, "if-range")
-  let selected_range = if if_range_matches(if_range, etag, modified) {
+  let selected_range = if request.meth is Get &&
+    if_range_matches(if_range, etag, modified) {
     download_range(header(request.headers, "range"), size)
   } else {
     Full
@@ -391,7 +386,9 @@ async fn get_object(
     "Accept-Ranges": "bytes",
     "Access-Control-Allow-Origin": config.cors_origin,
   })
-  conn.write_reader(file)
+  if request.meth is Get {
+    conn.write_reader(file)
+  }
   conn.end_response()
 }
 
@@ -403,46 +400,26 @@ async fn head_object(
   key : String,
   conn : ResponseConnection,
 ) -> Unit {
-  recover_object(config, bucket, key) catch {
-    error => {
-      storage_error(config, conn, error)
-      return
-    }
-  }
-  let path = object_file(config, bucket, key)
-  if !@fs.exists(path) {
-    conn.send_response(404, "NotFound", extra_headers={
-      "Access-Control-Allow-Origin": config.cors_origin,
-    })
-    conn.end_response()
-    return
-  }
-  let (etag, content_type) = object_meta(config, bucket, key)
-  let file = @fs.open(path, mode=ReadOnly)
-  defer file.close()
-  let modified = file.mtime().0
-  if !check_read_precondition(config, request, etag, modified, conn) {
-    return
-  }
-  conn.send_response(200, "OK", extra_headers={
-    "Last-Modified": http_time(modified),
-    "Access-Control-Expose-Headers": "ETag, Last-Modified, Content-Range, Accept-Ranges",
-    "Content-Type": content_type,
-    "ETag": "\"" + etag + "\"",
-    "Content-Length": file.size().to_string(),
-    "Accept-Ranges": "bytes",
-    "Access-Control-Allow-Origin": config.cors_origin,
-  })
-  conn.end_response()
+  get_object(config, request, bucket, key, conn)
 }
 
 ///|
 async fn delete_object(
   config : Config,
+  request : @http.Request,
   bucket : String,
   key : String,
   conn : ResponseConnection,
 ) -> Unit {
+  let handled = delete_version(config, request, bucket, key, conn) catch {
+    error => {
+      storage_error(config, conn, error)
+      return
+    }
+  }
+  if handled {
+    return
+  }
   if @fs.exists(objects_dir(config, bucket)) {
     try {
       prepare_object(config, bucket, key)
@@ -535,6 +512,21 @@ async fn delete_bucket(
     return
   }
   let uploads = bucket_dir(config, bucket) + "/.uploads"
+  let history = bucket_dir(config, bucket) + "/.versions"
+  if @fs.exists(history) {
+    for encoded in @fs.readdir(history, include_hidden=false) {
+      if !@fs.readdir(history + "/" + encoded, include_hidden=false).is_empty() {
+        send_error(
+          conn,
+          409,
+          "BucketNotEmpty",
+          "The bucket contains object versions or delete markers.",
+          config.cors_origin,
+        )
+        return
+      }
+    }
+  }
   if @fs.exists(uploads) &&
     !@fs.readdir(uploads, include_hidden=false).is_empty() {
     send_error(
@@ -716,7 +708,7 @@ async fn list_objects(
       list_xml_value(key, url_encoded) +
       "</Key>" +
       "<LastModified>" +
-      iso_time(file_modified(path)) +
+      iso_time(current_modified(config, bucket, key)) +
       "</LastModified>" +
       "<ETag>\"" +
       etag +
@@ -754,12 +746,22 @@ async fn handle_request(
 ) -> Unit {
   let cors = request_cors(config, request) catch {
     error => {
-      let conn : ResponseConnection = { raw: raw_conn, cors_headers: Map([]), }
+      let conn : ResponseConnection = {
+        raw: raw_conn,
+        cors_headers: Map([]),
+        operation_headers: Map([]),
+        head: request.meth is Head,
+      }
       storage_error(config, conn, error)
       return
     }
   }
-  let conn : ResponseConnection = { raw: raw_conn, cors_headers: cors.headers, }
+  let conn : ResponseConnection = {
+    raw: raw_conn,
+    cors_headers: cors.headers,
+    operation_headers: Map([]),
+    head: request.meth is Head,
+  }
   let (raw_path, query_text) = @core.split_raw_path(request.path)
   if raw_path == "/healthz" {
     conn.send_response(200, "OK", extra_headers={ "Content-Type": "text/plain" })
@@ -801,12 +803,15 @@ async fn handle_request(
     config.mutation_lock.acquire()
   }
   defer (if locked { config.mutation_lock.release() })
-  if bucket is None && @core.query_value(params, "cors") is Some(_) {
+  if bucket is None &&
+    params.any(param => {
+      ["cors", "versioning", "versions", "versionId"].contains(param.name)
+    }) {
     send_error(
       conn,
       400,
       "InvalidRequest",
-      "CORS configuration requires a bucket.",
+      "The selected subresource requires a bucket.",
       config.cors_origin,
     )
     return
@@ -833,6 +838,69 @@ async fn handle_request(
           "The bucket name is not valid.",
           config.cors_origin,
         )
+        return
+      }
+      let selectors = params.filter(param => {
+        ["cors", "versioning", "versions", "versionId"].contains(param.name)
+      })
+      if selectors.length() > 1 ||
+        selectors.any(param => param.name != "versionId" && param.value != "") {
+        send_error(
+          conn,
+          400,
+          "InvalidRequest",
+          "Conflicting or duplicate subresource parameters.",
+          config.cors_origin,
+        )
+        return
+      }
+      if @core.query_value(params, "versionId") is Some(id) {
+        if key is None ||
+          !valid_version_id(id) ||
+          multipart ||
+          !(request.meth is Get ||
+          request.meth is Head ||
+          request.meth is Delete) {
+          send_error(
+            conn,
+            400,
+            "InvalidArgument",
+            "Invalid version identifier or operation.",
+            config.cors_origin,
+          )
+          return
+        }
+      }
+      if @core.query_value(params, "versioning") is Some(_) {
+        if multipart {
+          send_error(
+            conn,
+            400,
+            "InvalidRequest",
+            "Conflicting subresources.",
+            config.cors_origin,
+          )
+          return
+        }
+        handle_versioning(config, request, name, key, request_body, conn) catch {
+          error => storage_error(config, conn, error)
+        }
+        return
+      }
+      if @core.query_value(params, "versions") is Some(_) {
+        if multipart {
+          send_error(
+            conn,
+            400,
+            "InvalidRequest",
+            "Conflicting subresources.",
+            config.cors_origin,
+          )
+          return
+        }
+        list_versions(config, request, name, key, params, conn) catch {
+          error => storage_error(config, conn, error)
+        }
         return
       }
       if @core.query_value(params, "cors") is Some(_) {
@@ -911,7 +979,7 @@ async fn handle_request(
               }
             Get => get_object(config, request, name, object_key, conn)
             Head => head_object(config, request, name, object_key, conn)
-            Delete => delete_object(config, name, object_key, conn)
+            Delete => delete_object(config, request, name, object_key, conn)
             _ =>
               send_error(
                 conn,

@@ -3,6 +3,8 @@
 enum StorageTransaction {
   ReplaceObject(String?)
   RemoveObject
+  PublishVersion(String, String?)
+  RemoveVersion(String)
 }
 
 ///|
@@ -30,6 +32,28 @@ fn parse_transaction(text : String) -> StorageTransaction? {
     return Some(RemoveObject)
   }
   let lines = text.split("\n").to_array()
+  if lines.length() == 3 &&
+    lines[0] == "remove-version" &&
+    lines[2] == "" &&
+    valid_upload_id(lines[1].to_owned()) {
+    return Some(RemoveVersion(lines[1].to_owned()))
+  }
+  if lines.length() == 4 &&
+    lines[0] == "version" &&
+    lines[3] == "" &&
+    valid_upload_id(lines[1].to_owned()) &&
+    (lines[2] == "-" || valid_upload_id(lines[2].to_owned())) {
+    return Some(
+      PublishVersion(
+        lines[1].to_owned(),
+        if lines[2] == "-" {
+          None
+        } else {
+          Some(lines[2].to_owned())
+        },
+      ),
+    )
+  }
   if lines.length() == 3 &&
     lines[0] == "put" &&
     lines[2] == "" &&
@@ -60,6 +84,10 @@ async fn recover_object(config : Config, bucket : String, key : String) -> Unit 
     None => raise Failure("Invalid storage transaction: \{journal}")
   }
   match transaction {
+    PublishVersion(storage, _) =>
+      apply_version_transaction(config, bucket, key, storage, remove=false)
+    RemoveVersion(storage) =>
+      apply_version_transaction(config, bucket, key, storage, remove=true)
     ReplaceObject(_) => {
       for path in [content, metadata] {
         if !@fs.exists(path + ".pending") && !@fs.exists(path) {
@@ -78,13 +106,15 @@ async fn recover_object(config : Config, bucket : String, key : String) -> Unit 
     }
   }
   sync_directory(objects_dir(config, bucket))
-  if transaction is ReplaceObject(Some(id)) {
+  let upload = match transaction {
+    ReplaceObject(upload) | PublishVersion(_, upload) => upload
+    _ => None
+  }
+  if upload is Some(id) {
     let uploads = bucket_dir(config, bucket) + "/.uploads"
-    @fs.rmdir(
-      upload_dir(config, bucket, id),
-      recursive=true,
-      allow_missing=true,
-    )
+    if @fs.exists(upload_dir(config, bucket, id)) {
+      @fs.rmdir(upload_dir(config, bucket, id), recursive=true)
+    }
     if @fs.exists(uploads) {
       sync_directory(uploads)
     }
@@ -129,7 +159,12 @@ async fn commit_object(
   etag : String,
   content_type : String,
   upload_id? : String,
-) -> Unit {
+) -> String? {
+  if versioning_status(config, bucket) != "" {
+    return Some(
+      commit_version(config, bucket, key, etag, content_type, upload_id?),
+    )
+  }
   @fs.write_file(
     meta_file(config, bucket, key) + ".pending",
     "etag=" + etag + "\ncontent-type=" + content_type + "\n",
@@ -140,6 +175,7 @@ async fn commit_object(
     None => "put\n"
   }
   publish_transaction(config, bucket, key, journal)
+  None
 }
 
 ///|
@@ -149,6 +185,10 @@ async fn recover_bucket(config : Config, bucket : String) -> Unit {
     return
   }
   @fs.remove(bucket_dir(config, bucket) + "/.cors.tmp", allow_missing=true)
+  @fs.remove(
+    bucket_dir(config, bucket) + "/.versioning.tmp",
+    allow_missing=true,
+  )
   let abandoned : Array[String] = []
   for entry in @fs.readdir(directory, include_hidden=false) {
     if entry.has_suffix(".object.txn") {
@@ -175,6 +215,26 @@ async fn recover_bucket(config : Config, bucket : String) -> Unit {
   if !abandoned.is_empty() {
     sync_directory(directory)
   }
+  let history = bucket_dir(config, bucket) + "/.versions"
+  if @fs.exists(history) {
+    if versioning_status(config, bucket).is_empty() {
+      raise Failure("Version history without bucket configuration")
+    }
+    for encoded in @fs.readdir(history, include_hidden=false) {
+      let key = match @core.filename_to_key(encoded) {
+        Some(key) if @core.key_to_filename(key) == encoded => key
+        _ => raise Failure("Invalid history key: \{encoded}")
+      }
+      let pending = version_dir(config, bucket, key) + "/.pending"
+      if @fs.exists(pending) {
+        @fs.rmdir(pending, recursive=true)
+      }
+      let versions = object_versions(config, bucket, key)
+      if versions.filter(version => version.id == "null").length() > 1 {
+        raise Failure("Duplicate null version without a recovery journal")
+      }
+    }
+  }
 }
 
 ///|
@@ -184,22 +244,4 @@ async fn recover_storage(config : Config) -> Unit {
       recover_bucket(config, bucket)
     }
   }
-}
-
-///|
-async fn open_object_snapshot(
-  config : Config,
-  bucket : String,
-  key : String,
-) -> (@fs.File, String, String)? {
-  config.mutation_lock.acquire()
-  defer config.mutation_lock.release()
-  recover_object(config, bucket, key)
-  let path = object_file(config, bucket, key)
-  if !@fs.exists(path) {
-    return None
-  }
-  let (etag, content_type) = object_meta(config, bucket, key)
-  let file = @fs.open(path, mode=ReadOnly)
-  Some((file, etag, content_type))
 }

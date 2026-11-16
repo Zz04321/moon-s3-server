@@ -2,6 +2,8 @@
 struct ResponseConnection {
   raw : @http.ServerConnection
   cors_headers : Map[@http.CaseInsensitiveString, String]
+  operation_headers : Map[@http.CaseInsensitiveString, String]
+  head : Bool
 }
 
 ///|
@@ -25,7 +27,20 @@ async fn ResponseConnection::send_response(
       headers[name] = value
     }
   }
+  for name, value in self.operation_headers {
+    headers[name] = value
+  }
   self.raw.send_response(status, reason, extra_headers=headers)
+}
+
+///|
+fn ResponseConnection::set_version(
+  self : ResponseConnection,
+  version : String?,
+) -> Unit {
+  if version is Some(id) {
+    self.operation_headers[@http.CaseInsensitiveString("x-amz-version-id")] = id
+  }
 }
 
 ///|
@@ -33,7 +48,9 @@ async fn ResponseConnection::write(
   self : ResponseConnection,
   data : &@io.Data,
 ) -> Unit {
-  self.raw.write(data)
+  if !self.head {
+    self.raw.write(data)
+  }
 }
 
 ///|
@@ -41,7 +58,9 @@ async fn ResponseConnection::write_reader(
   self : ResponseConnection,
   reader : &@io.Reader,
 ) -> Unit {
-  self.raw.write_reader(reader)
+  if !self.head {
+    self.raw.write_reader(reader)
+  }
 }
 
 ///|

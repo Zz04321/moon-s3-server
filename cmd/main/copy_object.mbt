@@ -16,6 +16,25 @@ fn parse_copy_source(value : String) -> (String, String)? {
 }
 
 ///|
+fn parse_versioned_copy_source(value : String) -> (String, String, String?)? {
+  let (path, query) = @core.split_raw_path(value)
+  let (bucket, key) = match parse_copy_source(path) {
+    Some(pair) => pair
+    None => return None
+  }
+  if query.is_empty() {
+    return Some((bucket, key, None))
+  }
+  let params = @core.query_pairs(query)
+  if params.length() != 1 ||
+    params[0].name != "versionId" ||
+    !valid_version_id(params[0].value) {
+    return None
+  }
+  Some((bucket, key, Some(params[0].value)))
+}
+
+///|
 fn copy_source_authorized(config : Config, request : @http.Request) -> Bool {
   if config.access_key is None {
     return true
@@ -60,15 +79,15 @@ async fn copy_object(
     )
     return
   }
-  let (source_bucket, source_key) = match
-    parse_copy_source(header(request.headers, "x-amz-copy-source")) {
+  let (source_bucket, source_key, source_version) = match
+    parse_versioned_copy_source(header(request.headers, "x-amz-copy-source")) {
     Some(source) => source
     None => {
       send_error(
         conn,
         400,
         "InvalidArgument",
-        "Expected an encoded bucket/key copy source without a version ID.",
+        "Expected an encoded bucket/key copy source with an optional versionId.",
         config.cors_origin,
       )
       return
@@ -132,8 +151,12 @@ async fn copy_object(
     return
   }
   recover_object(config, source_bucket, source_key)
-  let source_path = object_file(config, source_bucket, source_key)
-  if !@fs.exists(source_path) {
+  let versions = all_key_versions(config, source_bucket, source_key)
+  let candidates = match source_version {
+    Some(id) => versions.filter(version => version.id == id)
+    None => versions
+  }
+  if candidates.is_empty() {
     send_error(
       conn,
       404,
@@ -142,6 +165,33 @@ async fn copy_object(
       config.cors_origin,
     )
     return
+  }
+  let selected = candidates[0]
+  if selected.marker {
+    send_error(
+      conn,
+      if source_version is Some(_) {
+        400
+      } else {
+        404
+      },
+      if source_version is Some(_) {
+        "InvalidRequest"
+      } else {
+        "NoSuchKey"
+      },
+      "The copy source is a delete marker.",
+      config.cors_origin,
+    )
+    return
+  }
+  let source_path = version_content(config, source_bucket, source_key, selected)
+  if source_version is Some(_) ||
+    !selected.storage.is_empty() ||
+    versioning_status(config, source_bucket) != "" {
+    conn.operation_headers[@http.CaseInsensitiveString(
+      "x-amz-copy-source-version-id",
+    )] = selected.id
   }
   let source = @fs.open(source_path, mode=ReadOnly)
   defer source.close()
@@ -155,9 +205,8 @@ async fn copy_object(
     )
     return
   }
-  let (source_etag, source_content_type) = object_meta(
-    config, source_bucket, source_key,
-  )
+  let source_etag = selected.etag
+  let source_content_type = selected.content_type
   let condition = read_precondition(
     header(request.headers, "x-amz-copy-source-if-match"),
     header(request.headers, "x-amz-copy-source-if-none-match"),
@@ -170,7 +219,7 @@ async fn copy_object(
       request.headers,
       "x-amz-copy-source-if-unmodified-since",
     ),
-    modified=source.mtime().0,
+    modified=selected.modified,
   )
   if condition != 200 {
     send_error(
@@ -182,7 +231,10 @@ async fn copy_object(
     )
     return
   }
-  if bucket == source_bucket && key == source_key && directive == "COPY" {
+  if bucket == source_bucket &&
+    key == source_key &&
+    directive == "COPY" &&
+    source_version is None {
     send_error(
       conn,
       400,
@@ -211,7 +263,7 @@ async fn copy_object(
   destination.sync()
   let etag = @crypto.bytes_to_hex_string(digest.finalize())
   let modified = destination.mtime().0
-  commit_object(config, bucket, key, etag, content_type)
+  conn.set_version(commit_object(config, bucket, key, etag, content_type))
   send_xml(
     conn,
     200,

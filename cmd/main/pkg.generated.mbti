@@ -20,7 +20,13 @@ type CorsRule
 #derive(Eq, @debug.Debug)
 type DownloadRange
 
+type ListedVersion
+
 type MultipartUpload
+
+type ObjectSnapshot
+
+type ObjectVersion
 
 type ResponseConnection
 
