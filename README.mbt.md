@@ -15,6 +15,7 @@ path-style URLs.
 - Server-side CopyObject across buckets, with source conditions and COPY / REPLACE Content-Type.
 - Write/delete transaction recovery, consistent concurrent reads, and a data directory lock.
 - CORS and a `GET /healthz` endpoint.
+- Offline storage checks, SHA-256 backups, and verified restores with multipart resume.
 
 Verified with botocore 1.44.0, including a 100 MiB multipart round trip with
 SHA-256 validation. AWS CLI, MinIO `mc`, and Ceph `s3-tests` compatibility
@@ -78,14 +79,26 @@ must be signed when authentication is enabled.
 - One process per data directory. Transaction recovery runs before serving
   requests; corrupt or incomplete committed records prevent startup.
 - Recovery is tested on Linux for process crashes; power loss and hardware
-  faults need further validation. Stop the server or use a consistent
-  filesystem snapshot for backups.
+  faults need further validation.
 - No versioning, bucket policies, IAM/ACL, encryption, events, console, or
-  backup commands yet. Only single-range downloads are supported.
+  online backups yet. Only single-range downloads are supported.
 - No STS tokens, AWS streaming signatures, extra checksums, UploadPartCopy,
   or delimiter grouping for multipart upload listings.
 - CopyObject supports sources up to 5 GiB and Content-Type metadata only;
   version IDs, tags, ACLs, and custom metadata are unsupported.
+
+## Backup and restore
+
+Stop the server first. On Linux with Python 3.9+, run:
+
+```bash
+python3 scripts/admin.py check --root ./data
+python3 scripts/admin.py backup --root ./data --output ./backup.tar
+python3 scripts/admin.py restore --archive ./backup.tar --root ./restored-data
+```
+
+Restore requires a new directory and verifies all files before publishing it.
+See [administration](docs/administration.md) for guarantees, limits, and recovery.
 
 ## Development
 
@@ -93,7 +106,7 @@ must be signed when authentication is enabled.
 moon test --target native
 moon info && moon fmt
 bash scripts/smoke.sh
-for suite in auth list object presigned multipart storage copy; do
+for suite in auth list object presigned multipart storage copy admin; do
   python3 "scripts/${suite}_regression.py"
 done
 ```
