@@ -351,6 +351,7 @@ async fn commit_version(
   content_type : String,
   marker~ : Bool = false,
   upload_id? : String,
+  event_name~ : String = "ObjectCreated:Put",
 ) -> String {
   import_legacy_version(config, bucket, key)
   let versions = object_versions(config, bucket, key)
@@ -394,11 +395,29 @@ async fn commit_version(
   @fs.write_file(stage + "/record", version_record(version), sync=Full)
   sync_directory(stage)
   sync_directory(base)
+  let event = object_event(
+    config,
+    bucket,
+    key,
+    if marker {
+      "ObjectRemoved:DeleteMarkerCreated"
+    } else {
+      event_name
+    },
+    Some(id),
+    etag,
+    if marker {
+      0L
+    } else {
+      @fs.file_size(stage + "/content")
+    },
+  )
   publish_transaction(
     config,
     bucket,
     key,
     "version\n" + storage + "\n" + upload_id.unwrap_or("-") + "\n",
+    event?,
   )
   id
 }

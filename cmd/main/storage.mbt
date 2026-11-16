@@ -79,7 +79,12 @@ async fn recover_object(config : Config, bucket : String, key : String) -> Unit 
   if !@fs.exists(journal) {
     return
   }
-  let transaction = match parse_transaction(read_text(journal)) {
+  let text = read_text(journal)
+  let (event, text) = match parse_event_journal(text) {
+    Some(pair) => pair
+    None => raise Failure("Invalid event journal: \{journal}")
+  }
+  let transaction = match parse_transaction(text) {
     Some(transaction) => transaction
     None => raise Failure("Invalid storage transaction: \{journal}")
   }
@@ -106,6 +111,9 @@ async fn recover_object(config : Config, bucket : String, key : String) -> Unit 
     }
   }
   sync_directory(objects_dir(config, bucket))
+  if event is Some(id) {
+    preserve_event(config, bucket, key, id)
+  }
   let upload = match transaction {
     ReplaceObject(upload) | PublishVersion(_, upload) => upload
     _ => None
@@ -121,6 +129,9 @@ async fn recover_object(config : Config, bucket : String, key : String) -> Unit 
   }
   @fs.remove(journal)
   sync_directory(objects_dir(config, bucket))
+  if event is Some(id) {
+    release_event(config, id)
+  }
 }
 
 ///|
@@ -131,6 +142,7 @@ async fn prepare_object(config : Config, bucket : String, key : String) -> Unit 
       object_file(config, bucket, key) + ".pending",
       meta_file(config, bucket, key) + ".pending",
       object_file(config, bucket, key) + ".txn.tmp",
+      object_file(config, bucket, key) + ".event.pending",
     ] {
     @fs.remove(path, allow_missing=true)
   }
@@ -142,8 +154,16 @@ async fn publish_transaction(
   bucket : String,
   key : String,
   text : String,
+  event? : QueuedEvent,
 ) -> Unit {
   let journal = object_file(config, bucket, key) + ".txn"
+  let text = match event {
+    Some(event) => {
+      stage_event(config, bucket, key, event)
+      "event\n" + event.id + "\n" + text
+    }
+    None => text
+  }
   sync_directory(objects_dir(config, bucket))
   @fs.write_file(journal + ".tmp", text, sync=Full)
   @fs.rename(journal + ".tmp", journal, replace=true)
@@ -159,10 +179,19 @@ async fn commit_object(
   etag : String,
   content_type : String,
   upload_id? : String,
+  event_name~ : String = "ObjectCreated:Put",
 ) -> String? {
   if versioning_status(config, bucket) != "" {
     return Some(
-      commit_version(config, bucket, key, etag, content_type, upload_id?),
+      commit_version(
+        config,
+        bucket,
+        key,
+        etag,
+        content_type,
+        upload_id?,
+        event_name~,
+      ),
     )
   }
   @fs.write_file(
@@ -174,7 +203,20 @@ async fn commit_object(
     Some(id) => "put\n" + id + "\n"
     None => "put\n"
   }
-  publish_transaction(config, bucket, key, journal)
+  let event = if config.webhook_url is Some(_) {
+    object_event(
+      config,
+      bucket,
+      key,
+      event_name,
+      None,
+      etag,
+      @fs.file_size(object_file(config, bucket, key) + ".pending"),
+    )
+  } else {
+    None
+  }
+  publish_transaction(config, bucket, key, journal, event?)
   None
 }
 
@@ -208,6 +250,8 @@ async fn recover_bucket(config : Config, bucket : String) -> Unit {
       entry.has_suffix(".object.txn.tmp") ||
       entry.has_suffix(".object.tmp") ||
       entry.has_suffix(".meta.tmp") {
+      abandoned.push(directory + "/" + entry)
+    } else if entry.has_suffix(".object.event.pending") {
       abandoned.push(directory + "/" + entry)
     }
   }

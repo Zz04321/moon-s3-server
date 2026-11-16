@@ -205,13 +205,61 @@ def validate_policy(path, bucket):
                 and resources == [f"arn:aws:s3:::{bucket}/*"], "Unsupported bucket policy actions or resources")
 
 
+def validate_event(path, identity):
+    require(path.stat().st_size <= 65536, "Queued event exceeds 64 KiB")
+
+    def unique_fields(pairs):
+        values = {}
+        for name, value in pairs:
+            require(name not in values, "Duplicate queued event field")
+            values[name] = value
+        return values
+
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique_fields)
+        require(isinstance(document, dict) and isinstance(document.get("Records"), list)
+                and len(document["Records"]) == 1, "Expected one queued event record")
+        record = document["Records"][0]
+        require(record["eventId"] == identity and record["eventSource"] == "moon:s3"
+                and record["eventVersion"] == "2.1" and isinstance(record["eventTime"], str)
+                and record["eventTime"], "Invalid queued event identity")
+        datetime.datetime.strptime(record["eventTime"], "%Y-%m-%dT%H:%M:%S.000Z")
+        require(record["eventName"] in ("ObjectCreated:Put", "ObjectCreated:Copy", "ObjectCreated:CompleteMultipartUpload",
+                                        "ObjectRemoved:Delete", "ObjectRemoved:DeleteMarkerCreated"), "Invalid queued event operation")
+        bucket = record["s3"]["bucket"]
+        require(isinstance(bucket["name"], str) and re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]", bucket["name"])
+                and bucket["arn"] == "arn:aws:s3:::" + bucket["name"], "Invalid queued event bucket")
+        item = record["s3"]["object"]
+        require(isinstance(item["key"], str) and item["key"] and type(item["size"]) in (int, float)
+                and 0 <= item["size"] <= 5497558138880 and int(item["size"]) == item["size"], "Invalid queued event object")
+        if "versionId" in item:
+            require(isinstance(item["versionId"], str) and (item["versionId"] == "null"
+                    or re.fullmatch(r"[0-9a-f]{64}", item["versionId"])), "Invalid queued event version")
+        if "eTag" in item:
+            require(isinstance(item["eTag"], str) and re.fullmatch(r"[0-9a-f]{32}(?:-[1-9][0-9]{0,4})?", item["eTag"])
+                    and ("-" not in item["eTag"] or int(item["eTag"].rsplit("-", 1)[1]) <= 10000), "Invalid queued event ETag")
+    except (ValueError, UnicodeError, RecursionError, KeyError, TypeError) as error:
+        raise AdminError(f"Invalid queued event: {error}") from None
+
+
 def inspect_storage(root, entries):
     buckets = set()
     objects = uploads = total_bytes = 0
     warnings = []
+    queued_events = 0
     for name, record in entries.items():
         parts = safe_path(name).parts
         bucket = parts[0]
+        if bucket == ".events":
+            if len(parts) == 1:
+                require(record["kind"] == "directory", "Expected an event queue directory")
+            else:
+                require(len(parts) == 2 and record["kind"] == "file"
+                        and re.fullmatch(r"[0-9a-f]{64}\.json", parts[1]),
+                        f"Unfinished or invalid queued event: {name}; start the server to recover, then stop it and retry")
+                validate_event(root / name, parts[1][:-5])
+                queued_events += 1
+            continue
         require(re.fullmatch(r"[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]", bucket), f"Invalid bucket directory: {bucket}")
         buckets.add(bucket)
         if len(parts) == 1:
@@ -349,7 +397,8 @@ def inspect_storage(root, entries):
             if "version-id" in values:
                 require(any(path.startswith(f"{parts[0]}/.versions/{parts[2][:-5]}/") and path.endswith("/record") for path in entries), f"Current version has no history: {name}")
     return {"buckets": len(buckets), "objects": objects, "uploads": uploads,
-            "versions": version_count, "delete_markers": marker_count, "object_bytes": total_bytes, "warnings": warnings}
+            "versions": version_count, "delete_markers": marker_count, "queued_events": queued_events,
+            "object_bytes": total_bytes, "warnings": warnings}
 
 
 def manifest_for(root, entries):

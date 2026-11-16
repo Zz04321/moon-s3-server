@@ -18,6 +18,7 @@ path-style URLs.
 - Offline storage checks, SHA-256 backups, and verified restores with multipart resume.
 - Bucket versioning, historical reads, delete markers, version listing, and version restore by copy.
 - Bucket public-read/private switching through a restricted S3 Bucket Policy API.
+- Durable JSON webhooks for object creation and deletion, with retries and optional HMAC signatures.
 
 Verified with botocore 1.44.0, including a 100 MiB multipart round trip with
 SHA-256 validation. AWS CLI, MinIO `mc`, and Ceph `s3-tests` compatibility
@@ -59,6 +60,9 @@ Or run `bash scripts/smoke.sh` for a self-contained example.
 | `MOON_S3_SECRET_KEY` | Unset | Secret paired with the access key |
 | `MOON_S3_CORS_ORIGIN` | `*` | Fallback origin for buckets without CORS rules |
 | `MOON_S3_MULTIPART_TTL_SECONDS` | `604800` | Upload lifetime from creation; 1–31536000 seconds |
+| `MOON_S3_WEBHOOK_URL` | Unset | Enable object-event delivery to an HTTP(S) endpoint |
+| `MOON_S3_WEBHOOK_SECRET` | Unset | Sign webhook bodies with HMAC-SHA256 |
+| `MOON_S3_WEBHOOK_TIMEOUT_MS` | `5000` | Callback timeout; 100–60000 milliseconds |
 
 Set both credentials to nonempty values to enable authentication; leaving both
 unset allows anonymous access. Use a trusted network and a TLS reverse proxy
@@ -76,6 +80,7 @@ must be signed when authentication is enabled.
 Use `put_bucket_cors` / `get_bucket_cors` / `delete_bucket_cors` for bucket rules;
 see [CORS configuration](docs/cors.md) for matching and browser behavior.
 See [versioning](docs/versioning.md) for enable/suspend behavior and historical object operations.
+See [event webhooks](docs/events.md) for payloads, retries, and receiver deduplication.
 
 ## Limits and recovery
 
@@ -88,7 +93,7 @@ See [versioning](docs/versioning.md) for enable/suspend behavior and historical 
 - Recovery is tested on Linux for process crashes; power loss and hardware
   faults need further validation.
 - Bucket policies support public object-read grants only; no general IAM/ACL,
-  encryption, events, console, or
+  encryption, console, or
   online backups yet. Only single-range downloads are supported.
 - No STS tokens, AWS streaming signatures, extra checksums, UploadPartCopy,
   or delimiter grouping for multipart upload listings.
@@ -114,7 +119,7 @@ See [administration](docs/administration.md) for guarantees, limits, and recover
 moon test --target native
 moon info && moon fmt
 bash scripts/smoke.sh
-for suite in auth list object presigned multipart storage copy admin cors version policy; do
+for suite in auth list object presigned multipart storage copy admin cors version policy event; do
   python3 "scripts/${suite}_regression.py"
 done
 ```

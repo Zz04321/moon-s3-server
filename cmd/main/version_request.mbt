@@ -130,15 +130,25 @@ async fn delete_version(
           "x-amz-delete-marker",
         )] = "true"
       }
+      let event = object_event(
+        config,
+        bucket,
+        key,
+        "ObjectRemoved:Delete",
+        Some(id),
+        version.etag,
+        version.size,
+      )
       if version.storage.is_empty() {
         prepare_object(config, bucket, key)
-        publish_transaction(config, bucket, key, "delete\n")
+        publish_transaction(config, bucket, key, "delete\n", event?)
       } else {
         publish_transaction(
           config,
           bucket,
           key,
           "remove-version\n" + version.storage + "\n",
+          event?,
         )
       }
     }

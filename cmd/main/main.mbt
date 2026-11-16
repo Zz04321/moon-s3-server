@@ -8,6 +8,9 @@ struct Config {
   mutation_lock : @async.Mutex
   multipart_ttl : Int64
   mut multipart_cleanup_at : Int64
+  webhook_url : String?
+  webhook_secret : String?
+  webhook_timeout : Int32
 }
 
 ///|
@@ -33,6 +36,12 @@ fn load_config() -> Config {
       env_or("MOON_S3_MULTIPART_TTL_SECONDS", "604800"),
     ).unwrap_or(0L),
     multipart_cleanup_at: 0L,
+    webhook_url: @env.get_env_var("MOON_S3_WEBHOOK_URL"),
+    webhook_secret: @env.get_env_var("MOON_S3_WEBHOOK_SECRET"),
+    webhook_timeout: parse_list_number(
+      Some(env_or("MOON_S3_WEBHOOK_TIMEOUT_MS", "5000")),
+      0,
+    ).unwrap_or(0),
   }
 }
 
@@ -423,7 +432,22 @@ async fn delete_object(
   if @fs.exists(objects_dir(config, bucket)) {
     try {
       prepare_object(config, bucket, key)
-      publish_transaction(config, bucket, key, "delete\n")
+      let path = object_file(config, bucket, key)
+      let event = if config.webhook_url is Some(_) && @fs.exists(path) {
+        let (etag, _) = object_meta(config, bucket, key)
+        object_event(
+          config,
+          bucket,
+          key,
+          "ObjectRemoved:Delete",
+          None,
+          etag,
+          @fs.file_size(path),
+        )
+      } else {
+        None
+      }
+      publish_transaction(config, bucket, key, "delete\n", event?)
     } catch {
       error => {
         storage_error(config, conn, error)
@@ -1011,6 +1035,18 @@ async fn handle_request(
 ///|
 async fn main {
   let config = load_config()
+  if (config.webhook_url is Some(url) && webhook_address(url) is None) ||
+    (
+      config.webhook_secret is Some(secret) &&
+      (secret.is_empty() || config.webhook_url is None)
+    ) ||
+    config.webhook_timeout < 100 ||
+    config.webhook_timeout > 60000 {
+    println(
+      "Invalid webhook configuration: expected an HTTP(S) URL, an optional nonempty secret, and timeout 100-60000 ms.",
+    )
+    @env.exit(1)
+  }
   if config.multipart_ttl < 1L || config.multipart_ttl > 31536000L {
     println("MOON_S3_MULTIPART_TTL_SECONDS must be between 1 and 31536000.")
     @env.exit(1)
@@ -1038,6 +1074,12 @@ async fn main {
       @env.exit(1)
     }
   }
+  recover_events(config) catch {
+    error => {
+      println("Event recovery failed: \{error}")
+      @env.exit(1)
+    }
+  }
   cleanup_multipart(config)
   let listen = @socket.Addr::parse(config.listen) catch {
     _ => {
@@ -1047,10 +1089,15 @@ async fn main {
   }
   println("moon-s3-server listening on \{config.listen}, root=\{config.root}")
   let server = @http.Server(listen)
-  server.run_forever((request, body, conn) => {
-    handle_request(config, request, body, conn) catch {
-      error => println("request failed: \{error}")
+  @async.with_task_group(group => {
+    if config.webhook_url is Some(_) {
+      group.spawn_bg(() => dispatch_events(config), no_wait=true)
     }
+    server.run_forever((request, body, conn) => {
+      handle_request(config, request, body, conn) catch {
+        error => println("request failed: \{error}")
+      }
+    })
   }) catch {
     error => println("server terminated: \{error}")
   }

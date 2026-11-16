@@ -385,6 +385,7 @@ async fn complete_upload(
     etag,
     upload.content_type,
     upload_id=upload.id,
+    event_name="ObjectCreated:CompleteMultipartUpload",
   )
   conn.set_version(version)
   send_xml(

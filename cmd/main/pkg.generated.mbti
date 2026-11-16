@@ -31,6 +31,8 @@ type ObjectVersion
 #derive(Eq, @debug.Debug)
 type PublicReadPolicy
 
+type QueuedEvent
+
 type ResponseConnection
 
 #derive(Eq, @debug.Debug)

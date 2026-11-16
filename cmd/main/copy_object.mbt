@@ -263,7 +263,16 @@ async fn copy_object(
   destination.sync()
   let etag = @crypto.bytes_to_hex_string(digest.finalize())
   let modified = destination.mtime().0
-  conn.set_version(commit_object(config, bucket, key, etag, content_type))
+  conn.set_version(
+    commit_object(
+      config,
+      bucket,
+      key,
+      etag,
+      content_type,
+      event_name="ObjectCreated:Copy",
+    ),
+  )
   send_xml(
     conn,
     200,

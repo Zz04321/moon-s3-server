@@ -12,7 +12,7 @@ python3 scripts/admin.py check --root ./data
 python3 scripts/admin.py backup --root ./data --output ./backup.tar
 ```
 
-Both commands print a JSON report with bucket, current object, historical version, delete marker, and unfinished upload
+Both commands print a JSON report with bucket, current object, historical version, delete marker, queued event, and unfinished upload
 counts. Failures print a JSON error to stderr and exit with status 1. Checking
 does not repair or delete data; it may create the `.lock` file if absent.
 
@@ -20,6 +20,8 @@ Checks validate the current storage layout, object/metadata pairs, encoded
 keys, ETag syntax, bucket creation records, bucket CORS rules, and unfinished upload manifests.
 Bucket policies are validated against the server's supported public-read subset;
 malformed, duplicate, or unsupported policy fields cause checks to fail.
+Queued webhook events are validated against their filename IDs and JSON envelope.
+Unfinished event journals and staged queue entries require server recovery first.
 Version checks validate bucket settings, version records, unique IDs and ordering,
 historical content, and consistency between the latest version and current cache.
 Ordinary object content is checked against its MD5 ETag. A completed multipart
@@ -29,7 +31,7 @@ Partially written upload artifacts are preserved and reported as warnings.
 
 Backups include empty buckets, object content and metadata, all historical versions
 and delete markers, versioning settings, bucket policies, bucket CORS rules, creation records,
-and unfinished multipart uploads. They preserve file and directory modification
+unfinished multipart uploads, and pending webhook deliveries. They preserve file and directory modification
 times, including the fallback creation time used by older buckets. The process
 lock and environment variables, including credentials, are excluded. Save server
 configuration and credentials separately through your usual secure process.
@@ -61,6 +63,10 @@ if you want existing signed requests to remain usable. Confirm application
 reads and listings before switching clients to the restored service.
 Public-read grants are restored with the data. Enable credentials on the restored
 server to enforce private buckets and restrict management access.
+The webhook endpoint and signing secret are environment configuration, excluded
+from backups. Restored queued events are delivered to the currently configured
+endpoint when webhooks are enabled. Restoring an older backup can replay events
+already received; receivers must deduplicate by eventId.
 
 Restore requires a nonexistent destination and an existing parent directory.
 It never replaces an existing data root, even an empty one or a symlink.
