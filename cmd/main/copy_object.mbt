@@ -48,7 +48,7 @@ async fn copy_object(
   bucket : String,
   key : String,
   body : Bytes,
-  conn : @http.ServerConnection,
+  conn : ResponseConnection,
 ) -> Unit {
   if !copy_source_authorized(config, request) {
     send_error(

@@ -12,10 +12,17 @@ import {
 // Types and methods
 type Config
 
+type CorsResponse
+
+#derive(Eq, @debug.Debug)
+type CorsRule
+
 #derive(Eq, @debug.Debug)
 type DownloadRange
 
 type MultipartUpload
+
+type ResponseConnection
 
 #derive(Eq, @debug.Debug)
 type StorageTransaction

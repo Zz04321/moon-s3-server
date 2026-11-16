@@ -8,7 +8,7 @@ enum StorageTransaction {
 ///|
 async fn storage_error(
   config : Config,
-  conn : @http.ServerConnection,
+  conn : ResponseConnection,
   error : Error,
 ) -> Unit {
   println("storage operation failed: \{error}")
@@ -148,6 +148,7 @@ async fn recover_bucket(config : Config, bucket : String) -> Unit {
   if !@fs.exists(directory) {
     return
   }
+  @fs.remove(bucket_dir(config, bucket) + "/.cors.tmp", allow_missing=true)
   let abandoned : Array[String] = []
   for entry in @fs.readdir(directory, include_hidden=false) {
     if entry.has_suffix(".object.txn") {

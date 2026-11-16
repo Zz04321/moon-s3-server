@@ -14,7 +14,7 @@ path-style URLs.
 - Range downloads, conditional reads, ETags, and Content-Type metadata.
 - Server-side CopyObject across buckets, with source conditions and COPY / REPLACE Content-Type.
 - Write/delete transaction recovery, consistent concurrent reads, and a data directory lock.
-- CORS and a `GET /healthz` endpoint.
+- Persistent bucket CORS rules with preflight matching; a `GET /healthz` endpoint.
 - Offline storage checks, SHA-256 backups, and verified restores with multipart resume.
 
 Verified with botocore 1.44.0, including a 100 MiB multipart round trip with
@@ -55,7 +55,7 @@ Or run `bash scripts/smoke.sh` for a self-contained example.
 | `MOON_S3_LISTEN` | `127.0.0.1:9000` | Listen address |
 | `MOON_S3_ACCESS_KEY` | Unset | Enable SigV4 authentication |
 | `MOON_S3_SECRET_KEY` | Unset | Secret paired with the access key |
-| `MOON_S3_CORS_ORIGIN` | `*` | Allowed CORS origin |
+| `MOON_S3_CORS_ORIGIN` | `*` | Fallback origin for buckets without CORS rules |
 | `MOON_S3_MULTIPART_TTL_SECONDS` | `604800` | Upload lifetime from creation; 1–31536000 seconds |
 
 Set both credentials to nonempty values to enable authentication; leaving both
@@ -69,6 +69,8 @@ For temporary links, configure matching credentials and use
 `python3 scripts/presign.py --help`.
 Use the SDK's `copy_object` operation to copy without downloading; copy headers
 must be signed when authentication is enabled.
+Use `put_bucket_cors` / `get_bucket_cors` / `delete_bucket_cors` for bucket rules;
+see [CORS configuration](docs/cors.md) for matching and browser behavior.
 
 ## Limits and recovery
 
@@ -106,13 +108,13 @@ See [administration](docs/administration.md) for guarantees, limits, and recover
 moon test --target native
 moon info && moon fmt
 bash scripts/smoke.sh
-for suite in auth list object presigned multipart storage copy admin; do
+for suite in auth list object presigned multipart storage copy admin cors; do
   python3 "scripts/${suite}_regression.py"
 done
 ```
 
 Regression scripts use Python's standard library. With botocore installed,
-add `--sdk` to the presigned, multipart, or copy regression script for SDK checks.
+add `--sdk` to the presigned, multipart, copy, or CORS regression script for SDK checks.
 
 ## License
 

@@ -111,7 +111,7 @@ async fn initiate_upload(
   request : @http.Request,
   bucket : String,
   key : String,
-  conn : @http.ServerConnection,
+  conn : ResponseConnection,
 ) -> Unit {
   let random = match @env.rand(32) {
     Some(random) => random
@@ -168,7 +168,7 @@ async fn upload_part(
   upload : MultipartUpload,
   number : Int32,
   body : Bytes,
-  conn : @http.ServerConnection,
+  conn : ResponseConnection,
 ) -> Unit {
   let path = upload_dir(config, bucket, upload.id) +
     "/part." +
@@ -190,7 +190,7 @@ async fn list_parts(
   bucket : String,
   upload : MultipartUpload,
   params : Array[@core.QueryParam],
-  conn : @http.ServerConnection,
+  conn : ResponseConnection,
 ) -> Unit {
   let maximum = parse_list_number(@core.query_value(params, "max-parts"), 1000)
   let marker = parse_list_number(
@@ -270,7 +270,7 @@ async fn complete_upload(
   bucket : String,
   upload : MultipartUpload,
   body : Bytes,
-  conn : @http.ServerConnection,
+  conn : ResponseConnection,
 ) -> Unit {
   let parts = if body.length() <= 2097152 {
     parse_completed_parts(@utf8.decode_lossy(body.clamped_view()))
@@ -410,7 +410,7 @@ async fn list_uploads(
   config : Config,
   bucket : String,
   params : Array[@core.QueryParam],
-  conn : @http.ServerConnection,
+  conn : ResponseConnection,
 ) -> Unit {
   if @core.query_value(params, "delimiter").unwrap_or("") != "" {
     send_error(
@@ -532,7 +532,7 @@ async fn handle_multipart(
   key : String?,
   params : Array[@core.QueryParam],
   body : Bytes,
-  conn : @http.ServerConnection,
+  conn : ResponseConnection,
 ) -> Unit {
   if request.headers.contains(@http.CaseInsensitiveString("x-amz-copy-source")) {
     send_error(

@@ -17,13 +17,13 @@ counts. Failures print a JSON error to stderr and exit with status 1. Checking
 does not repair or delete data; it may create the `.lock` file if absent.
 
 Checks validate the current storage layout, object/metadata pairs, encoded
-keys, ETag syntax, bucket creation records, and unfinished upload manifests.
+keys, ETag syntax, bucket creation records, bucket CORS rules, and unfinished upload manifests.
 Ordinary object content is checked against its MD5 ETag. A completed multipart
 object's ETag cannot be recomputed without its original parts; this produces a
 warning, while backup SHA-256 still protects its content during transfer.
 Partially written upload artifacts are preserved and reported as warnings.
 
-Backups include empty buckets, object content and metadata, creation records,
+Backups include empty buckets, object content and metadata, bucket CORS rules, creation records,
 and unfinished multipart uploads. They preserve file and directory modification
 times, including the fallback creation time used by older buckets. The process
 lock and environment variables, including credentials, are excluded. Save server

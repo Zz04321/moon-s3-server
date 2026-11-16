@@ -9,6 +9,7 @@ import {
   "moonbitlang/core/env",
   "moonbitlang/x/time",
   "moonbitlang/x/crypto",
+  "moonbitlang/x/codec/base64",
 }
 
 supported_targets = "+native"

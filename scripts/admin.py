@@ -16,6 +16,7 @@ import stat
 import sys
 import tarfile
 import tempfile
+import xml.etree.ElementTree as ET
 
 
 FORMAT = "moon-s3-backup-v1"
@@ -129,6 +130,46 @@ def digest_file(path, algorithm="sha256"):
     return digest.hexdigest()
 
 
+def validate_cors(path):
+    require(path.stat().st_size <= 65536, "CORS configuration exceeds 64 KiB")
+    text = path.read_text(encoding="utf-8")
+    require("<!" not in text, "Unsupported CORS XML declarations")
+    require(not re.search(r"</?[A-Za-z_][\w.-]*:", text), "Prefixed CORS XML is unsupported")
+    try:
+        document = ET.fromstring(text)
+    except ET.ParseError as error:
+        raise AdminError(f"Invalid CORS XML: {error}") from None
+    namespace = "{http://s3.amazonaws.com/doc/2006-03-01/}" if document.tag.startswith("{") else ""
+    require(document.tag == namespace + "CORSConfiguration" and not document.attrib
+            and not (document.text or "").strip() and 1 <= len(document) <= 100, "Invalid CORS configuration")
+    identities = set()
+    for rule in document:
+        require(rule.tag == namespace + "CORSRule" and not rule.attrib and not (rule.text or "").strip()
+                and not (rule.tail or "").strip(), "Invalid CORS rule")
+        values = {}
+        for field in rule:
+            name = field.tag.removeprefix(namespace)
+            require(name in {"AllowedOrigin", "AllowedMethod", "AllowedHeader", "ExposeHeader", "ID", "MaxAgeSeconds"}
+                    and not field.attrib and not len(field) and not (field.tail or "").strip(), "Invalid CORS field")
+            values.setdefault(name, []).append(field.text or "")
+        require(values.get("AllowedOrigin") and values.get("AllowedMethod"), "CORS rule needs origins and methods")
+        require(all(value in {"GET", "HEAD", "PUT", "POST", "DELETE"} for value in values["AllowedMethod"]), "Invalid CORS method")
+        require(all(value and len(value) <= 2048 and value.count("*") <= 1
+                    and all(32 < ord(character) < 127 for character in value) for value in values["AllowedOrigin"]), "Invalid CORS origin")
+        for name in ["AllowedHeader", "ExposeHeader"]:
+            require(all(re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]{1,1024}", value)
+                        and value.count("*") <= (1 if name == "AllowedHeader" else 0)
+                        for value in values.get(name, [])), "Invalid CORS header")
+        if "MaxAgeSeconds" in values:
+            require(len(values["MaxAgeSeconds"]) == 1 and re.fullmatch(r"[0-9]{1,10}", values["MaxAgeSeconds"][0])
+                    and int(values["MaxAgeSeconds"][0]) <= 2147483647, "Invalid CORS max age")
+        if "ID" in values:
+            identity = values["ID"][0]
+            require(len(values["ID"]) == 1 and 1 <= len(identity.encode("utf-16-le")) // 2 <= 255
+                    and identity not in identities, "Invalid CORS rule ID")
+            identities.add(identity)
+
+
 def inspect_storage(root, entries):
     buckets = set()
     objects = uploads = total_bytes = 0
@@ -145,6 +186,11 @@ def inspect_storage(root, entries):
         elif len(parts) == 2 and parts[1] == ".created":
             require(record["kind"] == "file" and record["size"] <= 32, f"Invalid bucket creation time: {name}")
             require(re.fullmatch(r"[0-9]+", (root / name).read_text().strip()), f"Invalid bucket creation time: {name}")
+        elif len(parts) == 2 and parts[1] == ".cors":
+            require(record["kind"] == "file", f"Expected a CORS configuration file: {name}")
+            validate_cors(root / name)
+        elif len(parts) == 2 and parts[1] == ".cors.tmp":
+            raise AdminError(f"Unfinished CORS update: {name}; start the server to recover, then stop it and retry")
         elif len(parts) == 3 and parts[1] == "objects":
             filename = parts[2]
             require(record["kind"] == "file", f"Expected an object file: {name}")

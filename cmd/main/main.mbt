@@ -63,7 +63,7 @@ fn method_name(verb : @http.RequestMethod) -> String {
 
 ///|
 async fn send_xml(
-  conn : @http.ServerConnection,
+  conn : ResponseConnection,
   status : Int32,
   reason : String,
   body : String,
@@ -79,7 +79,7 @@ async fn send_xml(
 
 ///|
 async fn send_error(
-  conn : @http.ServerConnection,
+  conn : ResponseConnection,
   status : Int32,
   code : String,
   message : String,
@@ -221,7 +221,7 @@ async fn put_object(
   bucket : String,
   key : String,
   body : Bytes,
-  conn : @http.ServerConnection,
+  conn : ResponseConnection,
 ) -> Unit {
   if !@fs.exists(bucket_dir(config, bucket)) {
     send_error(
@@ -265,7 +265,7 @@ async fn check_read_precondition(
   request : @http.Request,
   etag : String,
   modified : Int64,
-  conn : @http.ServerConnection,
+  conn : ResponseConnection,
 ) -> Bool {
   let status = read_precondition(
     header(request.headers, "if-match"),
@@ -311,7 +311,7 @@ async fn get_object(
   request : @http.Request,
   bucket : String,
   key : String,
-  conn : @http.ServerConnection,
+  conn : ResponseConnection,
 ) -> Unit {
   let snapshot = open_object_snapshot(config, bucket, key) catch {
     error => {
@@ -401,7 +401,7 @@ async fn head_object(
   request : @http.Request,
   bucket : String,
   key : String,
-  conn : @http.ServerConnection,
+  conn : ResponseConnection,
 ) -> Unit {
   recover_object(config, bucket, key) catch {
     error => {
@@ -441,7 +441,7 @@ async fn delete_object(
   config : Config,
   bucket : String,
   key : String,
-  conn : @http.ServerConnection,
+  conn : ResponseConnection,
 ) -> Unit {
   if @fs.exists(objects_dir(config, bucket)) {
     try {
@@ -464,7 +464,7 @@ async fn delete_object(
 async fn create_bucket(
   config : Config,
   bucket : String,
-  conn : @http.ServerConnection,
+  conn : ResponseConnection,
 ) -> Unit {
   if !@core.valid_bucket_name(bucket) {
     send_error(
@@ -500,7 +500,7 @@ async fn create_bucket(
 async fn delete_bucket(
   config : Config,
   bucket : String,
-  conn : @http.ServerConnection,
+  conn : ResponseConnection,
 ) -> Unit {
   let dir = bucket_dir(config, bucket)
   recover_bucket(config, bucket) catch {
@@ -582,7 +582,7 @@ async fn list_objects(
   config : Config,
   bucket : String,
   params : Array[@core.QueryParam],
-  conn : @http.ServerConnection,
+  conn : ResponseConnection,
 ) -> Unit {
   recover_bucket(config, bucket) catch {
     error => {
@@ -729,7 +729,7 @@ async fn list_objects(
 }
 
 ///|
-async fn list_buckets(config : Config, conn : @http.ServerConnection) -> Unit {
+async fn list_buckets(config : Config, conn : ResponseConnection) -> Unit {
   let mut body = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>" +
     "<ListAllMyBucketsResult xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Owner><ID>moonbit</ID><DisplayName>moonbit</DisplayName></Owner><Buckets>"
   for name in @fs.readdir(config.root, include_hidden=false, sort=true) {
@@ -750,8 +750,16 @@ async fn handle_request(
   config : Config,
   request : @http.Request,
   body : &@io.Reader,
-  conn : @http.ServerConnection,
+  raw_conn : @http.ServerConnection,
 ) -> Unit {
+  let cors = request_cors(config, request) catch {
+    error => {
+      let conn : ResponseConnection = { raw: raw_conn, cors_headers: Map([]), }
+      storage_error(config, conn, error)
+      return
+    }
+  }
+  let conn : ResponseConnection = { raw: raw_conn, cors_headers: cors.headers, }
   let (raw_path, query_text) = @core.split_raw_path(request.path)
   if raw_path == "/healthz" {
     conn.send_response(200, "OK", extra_headers={ "Content-Type": "text/plain" })
@@ -761,13 +769,18 @@ async fn handle_request(
   }
   let params = @core.query_pairs(query_text)
   if method_name(request.meth) == "OPTIONS" {
-    conn.send_response(204, "No Content", extra_headers={
-      "Access-Control-Allow-Origin": config.cors_origin,
-      "Access-Control-Allow-Methods": "GET,PUT,POST,HEAD,DELETE,OPTIONS",
-      "Access-Control-Allow-Headers": "*",
-      "Access-Control-Max-Age": "600",
-    })
-    conn.end_response()
+    if cors.status == 204 {
+      conn.send_response(204, "No Content")
+      conn.end_response()
+    } else {
+      send_error(
+        conn,
+        cors.status,
+        cors.code,
+        "CORS preflight is not allowed for this request.",
+        config.cors_origin,
+      )
+    }
     return
   }
   let request_body = body.read_all().binary()
@@ -788,6 +801,16 @@ async fn handle_request(
     config.mutation_lock.acquire()
   }
   defer (if locked { config.mutation_lock.release() })
+  if bucket is None && @core.query_value(params, "cors") is Some(_) {
+    send_error(
+      conn,
+      400,
+      "InvalidRequest",
+      "CORS configuration requires a bucket.",
+      config.cors_origin,
+    )
+    return
+  }
   match bucket {
     None =>
       if request.meth is Get {
@@ -810,6 +833,12 @@ async fn handle_request(
           "The bucket name is not valid.",
           config.cors_origin,
         )
+        return
+      }
+      if @core.query_value(params, "cors") is Some(_) {
+        handle_cors(config, request, name, key, params, request_body, conn) catch {
+          error => storage_error(config, conn, error)
+        }
         return
       }
       if multipart {
