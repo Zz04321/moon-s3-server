@@ -185,6 +185,8 @@ async fn recover_bucket(config : Config, bucket : String) -> Unit {
     return
   }
   @fs.remove(bucket_dir(config, bucket) + "/.cors.tmp", allow_missing=true)
+  @fs.remove(bucket_dir(config, bucket) + "/.policy.tmp", allow_missing=true)
+  ignore(load_bucket_policy(config, bucket))
   @fs.remove(
     bucket_dir(config, bucket) + "/.versioning.tmp",
     allow_missing=true,

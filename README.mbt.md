@@ -17,6 +17,7 @@ path-style URLs.
 - Persistent bucket CORS rules with preflight matching; a `GET /healthz` endpoint.
 - Offline storage checks, SHA-256 backups, and verified restores with multipart resume.
 - Bucket versioning, historical reads, delete markers, version listing, and version restore by copy.
+- Bucket public-read/private switching through a restricted S3 Bucket Policy API.
 
 Verified with botocore 1.44.0, including a 100 MiB multipart round trip with
 SHA-256 validation. AWS CLI, MinIO `mc`, and Ceph `s3-tests` compatibility
@@ -62,6 +63,8 @@ Or run `bash scripts/smoke.sh` for a self-contained example.
 Set both credentials to nonempty values to enable authentication; leaving both
 unset allows anonymous access. Use a trusted network and a TLS reverse proxy
 for deployments beyond localhost.
+With credentials enabled, buckets default to private. [Bucket policies](docs/access-control.md)
+can grant anonymous object reads while keeping writes and management authenticated.
 
 SDK clients should use SigV4, path-style addressing, and disable optional
 checksums (`request_checksum_calculation="when_required"` and
@@ -84,7 +87,8 @@ See [versioning](docs/versioning.md) for enable/suspend behavior and historical 
   requests; corrupt or incomplete committed records prevent startup.
 - Recovery is tested on Linux for process crashes; power loss and hardware
   faults need further validation.
-- No bucket policies, IAM/ACL, encryption, events, console, or
+- Bucket policies support public object-read grants only; no general IAM/ACL,
+  encryption, events, console, or
   online backups yet. Only single-range downloads are supported.
 - No STS tokens, AWS streaming signatures, extra checksums, UploadPartCopy,
   or delimiter grouping for multipart upload listings.
@@ -110,13 +114,13 @@ See [administration](docs/administration.md) for guarantees, limits, and recover
 moon test --target native
 moon info && moon fmt
 bash scripts/smoke.sh
-for suite in auth list object presigned multipart storage copy admin cors version; do
+for suite in auth list object presigned multipart storage copy admin cors version policy; do
   python3 "scripts/${suite}_regression.py"
 done
 ```
 
 Regression scripts use Python's standard library. With botocore installed,
-add `--sdk` to the presigned, multipart, copy, CORS, or version regression script for SDK checks.
+add `--sdk` to the presigned, multipart, copy, CORS, version, or policy regression script for SDK checks.
 
 ## License
 

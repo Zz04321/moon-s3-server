@@ -18,6 +18,8 @@ does not repair or delete data; it may create the `.lock` file if absent.
 
 Checks validate the current storage layout, object/metadata pairs, encoded
 keys, ETag syntax, bucket creation records, bucket CORS rules, and unfinished upload manifests.
+Bucket policies are validated against the server's supported public-read subset;
+malformed, duplicate, or unsupported policy fields cause checks to fail.
 Version checks validate bucket settings, version records, unique IDs and ordering,
 historical content, and consistency between the latest version and current cache.
 Ordinary object content is checked against its MD5 ETag. A completed multipart
@@ -26,7 +28,7 @@ warning, while backup SHA-256 still protects its content during transfer.
 Partially written upload artifacts are preserved and reported as warnings.
 
 Backups include empty buckets, object content and metadata, all historical versions
-and delete markers, versioning settings, bucket CORS rules, creation records,
+and delete markers, versioning settings, bucket policies, bucket CORS rules, creation records,
 and unfinished multipart uploads. They preserve file and directory modification
 times, including the fallback creation time used by older buckets. The process
 lock and environment variables, including credentials, are excluded. Save server
@@ -57,6 +59,8 @@ MOON_S3_ROOT=./restored-data _build/native/debug/build/cmd/main/main.exe
 Use the same credentials and other environment settings as the original server
 if you want existing signed requests to remain usable. Confirm application
 reads and listings before switching clients to the restored service.
+Public-read grants are restored with the data. Enable credentials on the restored
+server to enforce private buckets and restrict management access.
 
 Restore requires a nonexistent destination and an existing parent directory.
 It never replaces an existing data root, even an empty one or a symlink.

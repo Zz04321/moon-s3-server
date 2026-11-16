@@ -170,6 +170,41 @@ def validate_cors(path):
             identities.add(identity)
 
 
+def validate_policy(path, bucket):
+    require(path.stat().st_size <= 20480, "Bucket policy exceeds 20 KiB")
+
+    def unique_fields(pairs):
+        values = {}
+        for name, value in pairs:
+            require(name not in values, "Duplicate bucket policy field")
+            values[name] = value
+        return values
+
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique_fields)
+    except (ValueError, UnicodeError, RecursionError) as error:
+        raise AdminError(f"Invalid bucket policy JSON: {error}") from None
+    require(isinstance(document, dict) and set(document) <= {"Version", "Id", "Statement"}
+            and document.get("Version") == "2012-10-17"
+            and ("Id" not in document or isinstance(document["Id"], str)), "Invalid bucket policy document")
+    statements = document.get("Statement")
+    if isinstance(statements, dict):
+        statements = [statements]
+    require(isinstance(statements, list) and len(statements) <= 20, "Invalid bucket policy statements")
+    for statement in statements:
+        require(isinstance(statement, dict) and set(statement) <= {"Sid", "Effect", "Principal", "Action", "Resource"}
+                and statement.get("Effect") == "Allow"
+                and statement.get("Principal") in ("*", {"AWS": "*"})
+                and ("Sid" not in statement or isinstance(statement["Sid"], str)), "Unsupported bucket policy statement")
+        actions = statement.get("Action")
+        actions = [actions] if isinstance(actions, str) else actions
+        resources = statement.get("Resource")
+        resources = [resources] if isinstance(resources, str) else resources
+        require(isinstance(actions, list) and actions
+                and all(action in ("s3:GetObject", "s3:GetObjectVersion") for action in actions)
+                and resources == [f"arn:aws:s3:::{bucket}/*"], "Unsupported bucket policy actions or resources")
+
+
 def inspect_storage(root, entries):
     buckets = set()
     objects = uploads = total_bytes = 0
@@ -189,6 +224,11 @@ def inspect_storage(root, entries):
         elif len(parts) == 2 and parts[1] == ".cors":
             require(record["kind"] == "file", f"Expected a CORS configuration file: {name}")
             validate_cors(root / name)
+        elif len(parts) == 2 and parts[1] == ".policy":
+            require(record["kind"] == "file", f"Expected a bucket policy file: {name}")
+            validate_policy(root / name, bucket)
+        elif len(parts) == 2 and parts[1] == ".policy.tmp":
+            raise AdminError(f"Unfinished bucket policy update: {name}; start the server to recover, then stop it and retry")
         elif len(parts) == 2 and parts[1] == ".cors.tmp":
             raise AdminError(f"Unfinished CORS update: {name}; start the server to recover, then stop it and retry")
         elif len(parts) == 2 and parts[1] == ".versioning":

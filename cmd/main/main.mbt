@@ -786,7 +786,8 @@ async fn handle_request(
     return
   }
   let request_body = body.read_all().binary()
-  if !authorize(config, request, raw_path, params, request_body) {
+  if !authorize(config, request, raw_path, params, request_body) &&
+    !public_read_candidate(config, request, raw_path, params) {
     send_error(
       conn,
       403,
@@ -805,7 +806,9 @@ async fn handle_request(
   defer (if locked { config.mutation_lock.release() })
   if bucket is None &&
     params.any(param => {
-      ["cors", "versioning", "versions", "versionId"].contains(param.name)
+      ["cors", "versioning", "versions", "versionId", "policy"].contains(
+        param.name,
+      )
     }) {
     send_error(
       conn,
@@ -841,7 +844,9 @@ async fn handle_request(
         return
       }
       let selectors = params.filter(param => {
-        ["cors", "versioning", "versions", "versionId"].contains(param.name)
+        ["cors", "versioning", "versions", "versionId", "policy"].contains(
+          param.name,
+        )
       })
       if selectors.length() > 1 ||
         selectors.any(param => param.name != "versionId" && param.value != "") {
@@ -883,6 +888,14 @@ async fn handle_request(
           return
         }
         handle_versioning(config, request, name, key, request_body, conn) catch {
+          error => storage_error(config, conn, error)
+        }
+        return
+      }
+      if @core.query_value(params, "policy") is Some(_) {
+        handle_bucket_policy(
+          config, request, name, key, params, request_body, conn,
+        ) catch {
           error => storage_error(config, conn, error)
         }
         return

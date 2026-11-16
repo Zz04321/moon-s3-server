@@ -19,9 +19,31 @@ async fn open_versioned_read(
     config.mutation_lock.acquire()
   }
   defer (if locked { config.mutation_lock.release() })
+  let (raw_path, query_text) = @core.split_raw_path(request.path)
+  let params = @core.query_pairs(query_text)
+  if public_read_candidate(config, request, raw_path, params) {
+    let allowed = match load_bucket_policy(config, bucket) {
+      Some(policy) =>
+        if @core.query_value(params, "versionId") is Some(_) {
+          policy.historical
+        } else {
+          policy.current
+        }
+      None => false
+    }
+    if !allowed {
+      send_error(
+        conn,
+        403,
+        "AccessDenied",
+        "Anonymous access is not permitted for this object.",
+        config.cors_origin,
+      )
+      return None
+    }
+  }
   recover_object(config, bucket, key)
-  let (_, query) = @core.split_raw_path(request.path)
-  let selected = @core.query_value(@core.query_pairs(query), "versionId")
+  let selected = @core.query_value(params, "versionId")
   let versions = all_key_versions(config, bucket, key)
   let candidates = match selected {
     None => versions
