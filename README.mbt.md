@@ -20,6 +20,7 @@ path-style URLs.
 - Bucket public-read/private switching through a restricted S3 Bucket Policy API.
 - Durable JSON webhooks for object creation and deletion, with retries and optional HMAC signatures.
 - Standard-library management CLI for files, versions, access, CORS, multipart cleanup, and offline administration.
+- Web console with a separate admin login, file browsing, transfers, version restore, and bucket settings.
 
 Verified with botocore 1.44.0, including a 100 MiB multipart round trip with
 SHA-256 validation. AWS CLI, MinIO `mc`, and Ceph `s3-tests` compatibility
@@ -52,6 +53,8 @@ curl --noproxy '*' 'http://127.0.0.1:9000/demo?list-type=2'
 Or run `bash scripts/smoke.sh` for a self-contained example.
 For the management CLI, run `python3 scripts/moon_s3.py --help`;
 see [command-line management](docs/cli.md) for examples.
+To open the [Web console](docs/console.md), set `MOON_S3_CONSOLE_PASSWORD`
+and run `python3 scripts/console.py`; visit `http://127.0.0.1:9001`.
 
 ## Configuration
 
@@ -96,8 +99,7 @@ See [event webhooks](docs/events.md) for payloads, retries, and receiver dedupli
 - Recovery is tested on Linux for process crashes; power loss and hardware
   faults need further validation.
 - Bucket policies support public object-read grants only; no general IAM/ACL,
-  encryption, console, or
-  online backups yet. Only single-range downloads are supported.
+  encryption, or online backups yet. Only single-range downloads are supported.
 - No STS tokens, AWS streaming signatures, extra checksums, UploadPartCopy,
   or delimiter grouping for multipart upload listings.
 - CopyObject supports sources up to 5 GiB and Content-Type metadata only;
@@ -122,13 +124,14 @@ See [administration](docs/administration.md) for guarantees, limits, and recover
 moon test --target native
 moon info && moon fmt
 bash scripts/smoke.sh
-for suite in auth list object presigned multipart storage copy admin cors version policy event cli; do
+for suite in auth list object presigned multipart storage copy admin cors version policy event cli console; do
   python3 "scripts/${suite}_regression.py"
 done
 ```
 
 Regression scripts use Python's standard library. With botocore installed,
 add `--sdk` to the presigned, multipart, copy, CORS, version, or policy regression script for SDK checks.
+The console regression also supports `--browser` with Playwright Chromium installed.
 
 ## License
 

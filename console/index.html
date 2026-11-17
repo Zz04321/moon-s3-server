@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Moon S3 · Storage Console</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <main id="login-view" class="login-layout">
+    <section class="welcome">
+      <div class="wordmark"><span class="moon-mark">◒</span> moon s3</div>
+      <p class="eyebrow">YOUR STORAGE, WITHIN REACH</p>
+      <h1>A little space.<br>All your possibilities.</h1>
+      <p class="welcome-copy">Keep your files close. Explore buckets, revisit a version, and share what matters.</p>
+      <div class="orbit"><span>LOCAL FIRST</span><strong>◒</strong><span>BUILT WITH MOONBIT</span></div>
+      <p class="welcome-footer">Object storage. A clear view.</p>
+    </section>
+    <section class="login-panel">
+      <form id="login-form" class="login-card">
+        <p class="eyebrow">STORAGE CONSOLE</p>
+        <h2>Welcome back.</h2>
+        <p>Sign in to your storage workspace.</p>
+        <label for="password">Administrator password</label>
+        <input id="password" name="password" type="password" required autocomplete="current-password" autofocus>
+        <button type="submit" class="primary">Open workspace <span>↗</span></button>
+        <p id="login-error" class="error" role="alert"></p>
+        <p class="fine-print">Your workspace session expires after one hour.</p>
+      </form>
+    </section>
+  </main>
+  <div id="workspace" class="workspace" hidden>
+    <aside class="sidebar">
+      <div class="wordmark"><span class="moon-mark">◒</span> moon s3</div>
+      <div class="sidebar-heading"><span>BUCKETS</span><button id="new-bucket" class="icon-button" aria-label="Create bucket">+</button></div>
+      <nav id="buckets" aria-label="Buckets"></nav>
+      <div class="sidebar-footer"><span class="status-dot"></span> Your storage workspace<button id="logout" class="text-button">Sign out ↗</button></div>
+    </aside>
+    <main class="content">
+      <header class="topbar"><span>Workspace <span class="crumb">/</span> <strong id="breadcrumb">Overview</strong></span><span class="tag">LOCAL STORAGE</span></header>
+      <section class="page-heading"><div><p class="eyebrow">A PLACE FOR EVERYTHING</p><h1 id="bucket-title">Your buckets</h1><p id="bucket-description">Select a bucket to explore its files, or create a new one.</p></div><button id="refresh" class="secondary">↻ Refresh</button></section>
+      <p id="notice" class="notice" role="status" hidden></p>
+      <section id="empty-workspace" class="empty-state"><span class="empty-icon">◫</span><h2>Make room for your next idea.</h2><p>Choose a bucket in the sidebar to get started.</p><button id="empty-create" class="primary">Create a bucket</button></section>
+      <section id="bucket-workspace" hidden>
+        <div class="bucket-summary"><span>BUCKET DETAILS</span><button id="versioning" class="pill">Versioning</button><button id="access" class="pill">Access</button><button id="cors" class="pill">CORS rules</button><button id="uploads" class="pill">Unfinished uploads</button><button id="delete-bucket" class="text-button danger">Delete bucket</button></div>
+        <div class="file-toolbar"><form id="search-form" class="search"><span aria-hidden="true">⌕</span><input id="prefix" placeholder="Filter by key prefix…" aria-label="Filter by key prefix"><button type="submit" class="secondary">Search</button></form><label class="history-toggle"><input id="show-history" type="checkbox"> Version history</label><button id="upload" class="primary" aria-label="Upload file">↑ Upload file</button></div>
+        <div class="table-card"><table><thead><tr><th>Object key</th><th>Size</th><th>Modified</th><th>Version</th><th class="actions-heading">Actions</th></tr></thead><tbody id="objects"></tbody></table><div id="file-empty" class="file-empty" hidden>No files here yet. Upload a file or try another prefix.</div><footer class="table-footer"><span id="result-count">0 objects</span><button id="next-page" class="secondary" hidden>Next page →</button></footer></div>
+        <p class="workspace-note">Files stay in your storage. Restore an earlier version without losing its history.</p>
+      </section>
+    </main>
+  </div>
+  <dialog id="modal"><form id="modal-form"><header><h2 id="modal-title"></h2><button id="modal-close" type="button" class="icon-button" aria-label="Close dialog">×</button></header><div id="modal-body"></div><p id="modal-error" class="error" role="alert"></p><footer><button id="modal-cancel" type="button" class="secondary">Cancel</button><button id="modal-submit" type="submit" class="primary">Save</button></footer></form></dialog>
+</body>
+</html>
