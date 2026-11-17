@@ -69,11 +69,12 @@ fn valid_object_key(key : String) -> Bool {
 fn unsupported_query(params : Array[@core.QueryParam]) -> Bool {
   params.any(param => {
     ![
-      "cors", "versioning", "versions", "versionId", "policy", "uploads", "uploadId",
-      "partNumber", "list-type", "prefix", "delimiter", "start-after", "continuation-token",
-      "encoding-type", "max-keys", "max-parts", "part-number-marker", "max-uploads",
-      "key-marker", "version-id-marker", "upload-id-marker", "X-Amz-Algorithm", "X-Amz-Credential",
-      "X-Amz-Date", "X-Amz-Expires", "X-Amz-SignedHeaders", "X-Amz-Signature", "x-id",
+      "cors", "versioning", "versions", "versionId", "policy", "location", "delete",
+      "uploads", "uploadId", "partNumber", "list-type", "prefix", "delimiter", "start-after",
+      "continuation-token", "encoding-type", "max-keys", "fetch-owner", "max-parts",
+      "part-number-marker", "max-uploads", "key-marker", "version-id-marker", "upload-id-marker",
+      "X-Amz-Algorithm", "X-Amz-Credential", "X-Amz-Date", "X-Amz-Expires", "X-Amz-SignedHeaders",
+      "X-Amz-Signature", "x-id",
     ].contains(param.name)
   })
 }
@@ -141,8 +142,12 @@ fn valid_operation_query(
   params : Array[@core.QueryParam],
 ) -> Bool {
   let mut allowed : Array[String] = []
-  if params.any(param => ["cors", "policy", "versioning"].contains(param.name)) {
-    allowed = ["cors", "policy", "versioning"]
+  if params.any(param => {
+      ["cors", "policy", "versioning", "location", "delete"].contains(
+        param.name,
+      )
+    }) {
+    allowed = ["cors", "policy", "versioning", "location", "delete"]
   } else if @core.query_value(params, "versions") is Some(_) {
     allowed = [
       "versions", "prefix", "delimiter", "encoding-type", "max-keys", "key-marker",
@@ -161,7 +166,7 @@ fn valid_operation_query(
     } else if request.meth is Get {
       allowed = [
         "list-type", "prefix", "delimiter", "start-after", "continuation-token",
-        "encoding-type", "max-keys",
+        "encoding-type", "max-keys", "fetch-owner",
       ]
     }
   }

@@ -88,7 +88,7 @@ def main():
                     assert headers["Accept-Ranges"] == "bytes"
                 for value in [f"bytes={len(payload)}-", "bytes=-0", "bytes=999999999999999999999-"]:
                     status, headers, body = request("GET", headers={"Range": value})
-                    assert (status, body) == (416, b"")
+                    assert status == 416 and ET.fromstring(body).findtext("Code") == "InvalidRange"
                     assert headers["Content-Range"] == f"bytes */{len(payload)}"
                 for value in ["items=0-2", "bytes=a-b", "bytes=5-2", "bytes=0-1,3-4"]:
                     status, _, body = request("GET", headers={"Range": value})
@@ -135,7 +135,7 @@ def main():
                 assert request("GET", headers={"If-Match": etag})[0] == 412
                 assert request("PUT", "/download-bucket/empty", body=b"")[0] == 200
                 status, headers, body = request("GET", "/download-bucket/empty", headers={"Range": "bytes=0-"})
-                assert (status, body) == (416, b"")
+                assert status == 416 and ET.fromstring(body).findtext("Code") == "InvalidRange"
                 assert headers["Content-Range"] == "bytes */0"
                 assert request("GET", "/download-bucket/empty")[2] == b""
 

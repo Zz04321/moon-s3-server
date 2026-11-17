@@ -171,3 +171,41 @@ concurrent uploads and part sizes through the proxy and container resource
 limits. Keep data on a durable local filesystem and follow
 [offline backup and restore](administration.md). The Web console runs as a
 separate process; see [console deployment](console.md).
+
+## TLS reverse proxy
+
+[deploy/nginx.conf](../deploy/nginx.conf) is a complete Nginx configuration
+tested with the image digest in [compatibility-lock.json](../scripts/compatibility-lock.json).
+It expects the backend on `127.0.0.1:9000` and listens on `127.0.0.1:8443`.
+Install a trusted certificate at `/etc/nginx/tls/fullchain.pem` and its key at
+`/etc/nginx/tls/privkey.pem`. Change the TLS listen address to the intended
+interface for remote access; keep the backend bound to loopback or a private
+container network. Run `nginx -t -c /absolute/path/to/deploy/nginx.conf` before
+loading it. When Nginx runs in a separate container, replace the upstream with
+the S3 service address; `127.0.0.1` refers to that container unless using host
+networking on Linux.
+
+The proxy preserves the original Host (including port) and raw request URI;
+do not add a URI suffix to `proxy_pass`, rewrite paths, merge slashes in the
+upstream URL, or replace Host with the backend hostname. Generate presigned
+URLs against the public HTTPS origin. The sample disables access logs so
+temporary credentials in query strings are not logged. Adapt error-log
+collection and retention to your environment; Nginx diagnostics may contain
+request targets.
+
+The proxy allocates a 1 KiB initial header buffer and at most two 4 KiB large
+header buffers. A request line or individual header exceeding 4 KiB is rejected;
+many smaller headers are also bounded by the available buffers. These limits
+apply before the MoonBit HTTP parser, whose own check runs after parsing.
+Tests cover both individual and aggregate header overflow, request line 414,
+and body 413. The 64 MiB body limit matches the server's default per-request
+limit. Request buffering is disabled; the backend still buffers accepted bodies
+within its configured budget. Change both limits together if needed, including
+multipart part sizes. Proxy timeouts measure inactivity; server deadlines
+still bound each header read and request handler.
+
+`mc cp` over HTTP uses AWS streaming signatures, which are unsupported. Use
+this TLS proxy and ordinary file uploads with `--disable-multipart`; see the
+[tested client workflows](compatibility.md). The regression generates a
+temporary self-signed certificate and uses `mc --insecure` only for that local
+test. Deployments should use trusted certificates and normal verification.

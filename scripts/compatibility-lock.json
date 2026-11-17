@@ -1,0 +1,55 @@
+{
+  "aws_cli": {
+    "version": "2.22.35",
+    "url": "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-2.22.35.zip",
+    "sha256": "8119ccf67de875f39d386abea986738fa710be57e20d4df66fa99c7f7fd09997"
+  },
+  "mc": {
+    "version": "RELEASE.2025-04-16T18-13-26Z",
+    "url": "https://github.com/minio/mc/releases/download/RELEASE.2025-04-16T18-13-26Z/mc.linux-amd64.RELEASE.2025-04-16T18-13-26Z",
+    "sha256": "ac90da87a35641be5a0ac75d49de5161ddb47d629b5ba01261b0ae9e00aea15f"
+  },
+  "ceph": {
+    "repository": "https://github.com/ceph/s3-tests.git",
+    "commit": "5b3987116eca0b4b8fa57d6b10f3db57bab196b6",
+    "module": "s3tests/functional/test_s3.py",
+    "cases": [
+      "test_bucket_create_delete",
+      "test_bucket_notexist",
+      "test_bucket_listv2_delimiter_basic",
+      "test_bucket_listv2_encoding_basic",
+      "test_bucket_listv2_prefix_basic",
+      "test_bucket_listv2_prefix_empty",
+      "test_bucket_listv2_prefix_not_exist",
+      "test_bucket_listv2_prefix_delimiter_basic",
+      "test_bucket_listv2_maxkeys_one",
+      "test_bucket_listv2_maxkeys_zero",
+      "test_bucket_listv2_startafter_after_list",
+      "test_bucket_listv2_fetchowner_notempty",
+      "test_bucket_listv2_fetchowner_defaultempty",
+      "test_bucket_listv2_fetchowner_empty",
+      "test_object_write_to_nonexist_bucket",
+      "test_object_read_not_exist",
+      "test_object_head_zero_bytes",
+      "test_object_write_check_etag",
+      "test_object_write_read_update_read_delete",
+      "test_object_copy_zero_size",
+      "test_object_copy_16m",
+      "test_object_copy_same_bucket",
+      "test_object_copy_verify_contenttype",
+      "test_object_copy_diff_bucket",
+      "test_object_copy_bucket_not_found",
+      "test_object_copy_key_not_found",
+      "test_abort_multipart_upload",
+      "test_abort_multipart_upload_not_found",
+      "test_ranged_request_response_code",
+      "test_ranged_request_skip_leading_bytes_response_code",
+      "test_ranged_request_return_trailing_bytes_response_code",
+      "test_ranged_request_invalid_range",
+      "test_ranged_request_empty_object"
+    ]
+  },
+  "nginx_image": "nginx:1.28.0-alpine@sha256:30f1c0d78e0ad60901648be663a710bdadf19e4c10ac6782c235200619158284",
+  "boto3": "1.44.0",
+  "botocore": "1.44.0"
+}

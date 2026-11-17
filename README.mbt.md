@@ -8,7 +8,7 @@ path-style URLs.
 
 ## Features
 
-- Bucket and object CRUD; ListObjectsV2 with prefixes, pagination, and delimiters.
+- Bucket and object CRUD; batch deletion; ListObjectsV2 with prefixes, pagination, and delimiters.
 - Optional SigV4 authentication and presigned GET / HEAD / PUT URLs.
 - Multipart uploads with resumable parts, pagination, abort, and expiration.
 - Range downloads, conditional reads/writes, ETags, and Content-Type metadata.
@@ -23,9 +23,9 @@ path-style URLs.
 - Web console with a separate admin login, file browsing, transfers, version restore, and bucket settings.
 - JSON configuration, graceful shutdown, structured logs, authenticated metrics, and Docker packaging.
 
-Verified with botocore 1.44.0, including a 100 MiB multipart round trip with
-SHA-256 validation. AWS CLI, MinIO `mc`, and Ceph `s3-tests` compatibility
-testing is still pending.
+Fixed-version client acceptance covers botocore 1.44.0 (including a 100 MiB
+multipart round trip), AWS CLI 2.22.35, MinIO `mc` over TLS, and selected Ceph
+`s3-tests`. See the [compatibility matrix and reproduction steps](docs/compatibility.md).
 
 ## Quick start
 
@@ -136,7 +136,7 @@ See [administration](docs/administration.md) for guarantees, limits, and recover
 moon test --target native
 moon info && moon fmt
 bash scripts/smoke.sh
-for suite in auth list object presigned multipart storage copy admin cors version policy event cli console operations safety; do
+for suite in auth list object presigned multipart storage copy admin cors version policy event cli console operations safety delete; do
   python3 "scripts/${suite}_regression.py"
 done
 ```

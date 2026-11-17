@@ -106,30 +106,24 @@ async fn open_versioned_read(
 }
 
 ///|
-async fn delete_version(
+async fn remove_version(
   config : Config,
-  request : @http.Request,
   bucket : String,
   key : String,
-  conn : ResponseConnection,
-) -> Bool {
-  let (_, query) = @core.split_raw_path(request.path)
-  let selected = @core.query_value(@core.query_pairs(query), "versionId")
+  selected : String?,
+) -> (Bool, String?, Bool) {
   if selected is None && versioning_status(config, bucket) == "" {
-    return false
+    return (false, None, false)
   }
   recover_object(config, bucket, key)
+  let mut marker = false
+  let mut removed = selected
   if selected is Some(id) {
     let versions = all_key_versions(config, bucket, key)
     let matches = versions.filter(version => version.id == id)
-    conn.set_version(Some(id))
     if !matches.is_empty() {
       let version = matches[0]
-      if version.marker {
-        conn.operation_headers[@http.CaseInsensitiveString(
-          "x-amz-delete-marker",
-        )] = "true"
-      }
+      marker = version.marker
       let event = object_event(
         config,
         bucket,
@@ -155,7 +149,28 @@ async fn delete_version(
   } else {
     prepare_object(config, bucket, key)
     let id = commit_version(config, bucket, key, "", "", marker=true)
-    conn.set_version(Some(id))
+    removed = Some(id)
+    marker = true
+  }
+  (true, removed, marker)
+}
+
+///|
+async fn delete_version(
+  config : Config,
+  request : @http.Request,
+  bucket : String,
+  key : String,
+  conn : ResponseConnection,
+) -> Bool {
+  let (_, query) = @core.split_raw_path(request.path)
+  let selected = @core.query_value(@core.query_pairs(query), "versionId")
+  let (handled, removed, marker) = remove_version(config, bucket, key, selected)
+  if !handled {
+    return false
+  }
+  conn.set_version(removed)
+  if marker {
     conn.operation_headers[@http.CaseInsensitiveString("x-amz-delete-marker")] = "true"
   }
   conn.send_response(204, "No Content")

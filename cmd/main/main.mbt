@@ -394,11 +394,14 @@ async fn get_object(
   match selected_range {
     Full => ()
     Unsatisfiable => {
+      let error_body = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Error><Code>InvalidRange</Code><Message>The requested range is not satisfiable.</Message><RequestId>moon-s3-server</RequestId></Error>"
       conn.send_response(416, "Requested Range Not Satisfiable", extra_headers={
         "Content-Range": "bytes */" + size.to_string(),
-        "Content-Length": "0",
+        "Content-Type": "application/xml",
+        "Content-Length": @utf8.encode(error_body).length().to_string(),
         "Access-Control-Allow-Origin": config.cors_origin,
       })
+      conn.write(error_body)
       conn.end_response()
       return
     }
@@ -472,36 +475,43 @@ async fn delete_object(
   if handled {
     return
   }
-  if @fs.exists(objects_dir(config, bucket)) {
-    try {
-      prepare_object(config, bucket, key)
-      let path = object_file(config, bucket, key)
-      let event = if config.webhook_url is Some(_) && @fs.exists(path) {
-        let (etag, _) = object_meta(config, bucket, key)
-        object_event(
-          config,
-          bucket,
-          key,
-          "ObjectRemoved:Delete",
-          None,
-          etag,
-          @fs.file_size(path),
-        )
-      } else {
-        None
-      }
-      publish_transaction(config, bucket, key, "delete\n", event?)
-    } catch {
-      error => {
-        storage_error(config, conn, error)
-        return
-      }
+  remove_unversioned_object(config, bucket, key) catch {
+    error => {
+      storage_error(config, conn, error)
+      return
     }
   }
   conn.send_response(204, "No Content", extra_headers={
     "Access-Control-Allow-Origin": config.cors_origin,
   })
   conn.end_response()
+}
+
+///|
+async fn remove_unversioned_object(
+  config : Config,
+  bucket : String,
+  key : String,
+) -> Unit {
+  if @fs.exists(objects_dir(config, bucket)) {
+    prepare_object(config, bucket, key)
+    let path = object_file(config, bucket, key)
+    let event = if config.webhook_url is Some(_) && @fs.exists(path) {
+      let (etag, _) = object_meta(config, bucket, key)
+      object_event(
+        config,
+        bucket,
+        key,
+        "ObjectRemoved:Delete",
+        None,
+        etag,
+        @fs.file_size(path),
+      )
+    } else {
+      None
+    }
+    publish_transaction(config, bucket, key, "delete\n", event?)
+  }
 }
 
 ///|
@@ -679,6 +689,30 @@ async fn list_objects(
     }
   }
   let delimiter = @core.query_value(params, "delimiter").unwrap_or("")
+  let owner = match @core.query_value(params, "fetch-owner") {
+    None | Some("false") => false
+    Some("true") => true
+    _ => {
+      send_error(
+        conn,
+        400,
+        "InvalidArgument",
+        "fetch-owner must be true or false.",
+        config.cors_origin,
+      )
+      return
+    }
+  }
+  if @core.query_value(params, "list-type") is Some(value) && value != "2" {
+    send_error(
+      conn,
+      400,
+      "InvalidArgument",
+      "list-type must be 2.",
+      config.cors_origin,
+    )
+    return
+  }
   let start_after = @core.query_value(params, "start-after").unwrap_or("")
   let url_encoded = match @core.query_value(params, "encoding-type") {
     None => false
@@ -785,7 +819,13 @@ async fn list_objects(
       etag +
       "\"</ETag><Size>" +
       @fs.file_size(path).to_string() +
-      "</Size><StorageClass>STANDARD</StorageClass></Contents>"
+      "</Size><StorageClass>STANDARD</StorageClass>" +
+      (if owner {
+        "<Owner><ID>moonbit</ID><DisplayName>moonbit</DisplayName></Owner>"
+      } else {
+        ""
+      }) +
+      "</Contents>"
   }
   body += "</ListBucketResult>"
   send_xml(conn, 200, "OK", body, config.cors_origin)
@@ -1030,9 +1070,9 @@ async fn handle_request(
   defer (if locked { config.mutation_lock.release() })
   if bucket is None &&
     params.any(param => {
-      ["cors", "versioning", "versions", "versionId", "policy"].contains(
-        param.name,
-      )
+      [
+        "cors", "versioning", "versions", "versionId", "policy", "location", "delete",
+      ].contains(param.name)
     }) {
     send_error(
       conn,
@@ -1114,9 +1154,9 @@ async fn handle_request(
         }
       }
       let selectors = params.filter(param => {
-        ["cors", "versioning", "versions", "versionId", "policy"].contains(
-          param.name,
-        )
+        [
+          "cors", "versioning", "versions", "versionId", "policy", "location", "delete",
+        ].contains(param.name)
       })
       if selectors.length() > 1 ||
         selectors.any(param => param.name != "versionId" && param.value != "") {
@@ -1145,6 +1185,58 @@ async fn handle_request(
           )
           return
         }
+      }
+      if @core.query_value(params, "delete") is Some(_) {
+        if key is Some(_) || multipart || !(request.meth is Post) {
+          send_error(
+            conn,
+            400,
+            "InvalidRequest",
+            "Batch deletion requires a bucket POST.",
+            config.cors_origin,
+          )
+        } else if [
+            "if-match", "if-none-match", "if-modified-since", "if-unmodified-since",
+          ].any(name => !header(request.headers, name).is_empty()) {
+          send_error(
+            conn,
+            501,
+            "NotImplemented",
+            "Conditional batch deletion is not supported.",
+            config.cors_origin,
+          )
+        } else {
+          delete_objects(config, name, request_body, conn)
+        }
+        return
+      }
+      if @core.query_value(params, "location") is Some(_) {
+        if key is Some(_) || multipart || !(request.meth is Get) {
+          send_error(
+            conn,
+            400,
+            "InvalidRequest",
+            "Location requires a bucket GET.",
+            config.cors_origin,
+          )
+        } else if !@fs.exists(bucket_dir(config, name)) {
+          send_error(
+            conn,
+            404,
+            "NoSuchBucket",
+            "Bucket not found.",
+            config.cors_origin,
+          )
+        } else {
+          send_xml(
+            conn,
+            200,
+            "OK",
+            "<LocationConstraint xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"/>",
+            config.cors_origin,
+          )
+        }
+        return
       }
       if @core.query_value(params, "versioning") is Some(_) {
         if multipart {
