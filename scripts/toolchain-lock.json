@@ -1,0 +1,17 @@
+{
+  "platform": "linux-x86_64",
+  "archives": [
+    {
+      "name": "moonbit.tar.gz",
+      "url": "https://cli.moonbitlang.com/binaries/latest/moonbit-linux-x86_64.tar.gz",
+      "sha256": "80d987523308fa490eba9f1baf98df996a5a7891e118357553b7c2608c0597c5",
+      "directory": "."
+    },
+    {
+      "name": "core.tar.gz",
+      "url": "https://cli.moonbitlang.com/cores/core-latest.tar.gz",
+      "sha256": "8ec2a2c01335501d703867bb4eef5f92d3cd7e1ae1ee5f7f14d54d16d2c7c2b5",
+      "directory": "lib"
+    }
+  ]
+}

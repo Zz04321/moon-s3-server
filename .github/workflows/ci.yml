@@ -1,19 +1,33 @@
 name: CI
 
 on:
+  push:
+    branches: [main]
+  pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   native:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Install MoonBit
+      - uses: ./.github/actions/setup-moon
+
+      - name: Format and interfaces
         run: |
-          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
-          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+          moon fmt --check
+          moon info
+          git diff --exit-code -- '*.mbti'
 
       - name: Check
         run: moon check --target native
@@ -23,3 +37,23 @@ jobs:
 
       - name: Build server
         run: moon build cmd/main --target native
+
+      - name: Smoke and regressions
+        run: |
+          set -o pipefail
+          mkdir -p /tmp/moon-s3-ci
+          python3 scripts/run_regressions.py 2>&1 | tee /tmp/moon-s3-ci/regressions.log
+
+      - name: Validate release bundle
+        run: |
+          python3 scripts/package_release.py --output /tmp/moon-s3-ci/dist
+          python3 scripts/release_regression.py /tmp/moon-s3-ci/dist/*.tar.gz
+
+      - name: Save CI evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-ci-${{ github.sha }}
+          path: /tmp/moon-s3-ci/
+          if-no-files-found: warn
+          retention-days: 14

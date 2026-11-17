@@ -1,0 +1,61 @@
+name: Release bundle
+on:
+  workflow_dispatch:
+    inputs:
+      draft_release:
+        description: Create a draft GitHub prerelease after validation
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/setup-moon
+      - name: Validate source
+        run: |
+          moon fmt --check
+          moon check --target native
+          moon test --target native
+          moon info
+          git diff --exit-code
+          python3 scripts/run_regressions.py
+      - name: Build and test release
+        run: |
+          python3 scripts/package_release.py --output /tmp/moon-s3-release
+          python3 scripts/release_regression.py /tmp/moon-s3-release/*.tar.gz
+          mkdir -p /tmp/moon-s3-release-extracted
+          tar -xzf /tmp/moon-s3-release/*.tar.gz -C /tmp/moon-s3-release-extracted
+          docker build -t moon-s3-server:release-check /tmp/moon-s3-release-extracted/moon-s3-server-*-linux-x86_64
+          python3 scripts/docker_smoke.py --image moon-s3-server:release-check
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ github.sha }}
+          path: /tmp/moon-s3-release/
+          if-no-files-found: error
+          retention-days: 30
+  draft:
+    if: inputs.draft_release
+    needs: bundle
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-${{ github.sha }}
+          path: /tmp/moon-s3-release
+      - name: Create draft prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(python3 -c 'import json; print(json.load(open("/tmp/moon-s3-release/manifest.json"))["version"])')
+          gh release create "$version" /tmp/moon-s3-release/* \
+            --target "$GITHUB_SHA" --draft --prerelease \
+            --title "$version" --notes-file docs/release-notes.md

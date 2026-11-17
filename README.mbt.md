@@ -30,10 +30,10 @@ multipart round trip), AWS CLI 2.22.35, MinIO `mc` over TLS, and selected Ceph
 ## Quick start
 
 Requires the [MoonBit CLI](https://www.moonbitlang.com/download/)
-(tested with `moon 0.1.20261102`).
+(tested with `moon 0.1.20261102`; CI uses the hash-locked `0.1.20261104` snapshot).
 
 ```bash
-git clone https://github.com/Zz04321/moon-s3-server.git
+git clone https://github.com/zzSmall6/moon-s3-server.git
 cd moon-s3-server
 moon build cmd/main --target native
 
@@ -144,6 +144,10 @@ done
 Regression scripts use Python's standard library. With botocore installed,
 add `--sdk` to the presigned, multipart, copy, CORS, version, or policy regression script for SDK checks.
 The console regression also supports `--browser` with Playwright Chromium installed.
+
+Pushes to `main` and pull requests run native CI and all local regression suites.
+External client acceptance and release packaging are manual Actions workflows.
+See [release bundles and validation](docs/releasing.md) for installation and publishing.
 
 ## License
 

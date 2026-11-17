@@ -1,0 +1,37 @@
+name: External compatibility
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  clients:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/setup-moon
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@v6
+      - name: Install fixed-version clients
+        run: python scripts/install_compatibility.py
+      - name: Run external acceptance
+        run: |
+          set -o pipefail
+          mkdir -p /tmp/moon-s3-evidence
+          python scripts/compatibility_regression.py --report /tmp/moon-s3-evidence/acceptance.json 2>&1 | tee /tmp/moon-s3-evidence/clients.log
+      - name: Run SDK acceptance
+        run: |
+          set -o pipefail
+          python scripts/run_regressions.py --sdk 2>&1 | tee /tmp/moon-s3-evidence/sdk.log
+      - name: Save acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compatibility-${{ github.sha }}
+          path: /tmp/moon-s3-evidence/
+          if-no-files-found: warn
+          retention-days: 30
