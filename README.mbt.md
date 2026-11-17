@@ -19,6 +19,7 @@ path-style URLs.
 - Bucket versioning, historical reads, delete markers, version listing, and version restore by copy.
 - Bucket public-read/private switching through a restricted S3 Bucket Policy API.
 - Durable JSON webhooks for object creation and deletion, with retries and optional HMAC signatures.
+- Standard-library management CLI for files, versions, access, CORS, multipart cleanup, and offline administration.
 
 Verified with botocore 1.44.0, including a 100 MiB multipart round trip with
 SHA-256 validation. AWS CLI, MinIO `mc`, and Ceph `s3-tests` compatibility
@@ -49,6 +50,8 @@ curl --noproxy '*' 'http://127.0.0.1:9000/demo?list-type=2'
 ```
 
 Or run `bash scripts/smoke.sh` for a self-contained example.
+For the management CLI, run `python3 scripts/moon_s3.py --help`;
+see [command-line management](docs/cli.md) for examples.
 
 ## Configuration
 
@@ -119,7 +122,7 @@ See [administration](docs/administration.md) for guarantees, limits, and recover
 moon test --target native
 moon info && moon fmt
 bash scripts/smoke.sh
-for suite in auth list object presigned multipart storage copy admin cors version policy event; do
+for suite in auth list object presigned multipart storage copy admin cors version policy event cli; do
   python3 "scripts/${suite}_regression.py"
 done
 ```
