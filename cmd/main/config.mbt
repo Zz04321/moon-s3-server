@@ -11,12 +11,13 @@ fn parse_settings(text : String) -> Map[String, String] raise {
   }
   let settings : Map[String, String] = Map([])
   for name, value in fields {
-    if ["multipart_ttl_seconds", "webhook_timeout_ms", "shutdown_timeout_ms"].contains(
-        name,
-      ) {
+    if [
+        "multipart_ttl_seconds", "webhook_timeout_ms", "shutdown_timeout_ms", "max_request_bytes",
+        "max_buffered_bytes", "max_connections", "request_timeout_ms",
+      ].contains(name) {
       match value {
         Number(number, ..) if number >= 0.0 &&
-          number <= 31536000.0 &&
+          number <= 536870912.0 &&
           number == number.to_int64().to_double() =>
           settings[name] = number.to_int64().to_string()
         _ => raise Failure("Invalid numeric configuration setting")

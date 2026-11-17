@@ -18,6 +18,12 @@ does not repair or delete data; it may create the `.lock` file if absent.
 
 Checks validate the current storage layout, object/metadata pairs, encoded
 keys, ETag syntax, bucket creation records, bucket CORS rules, and unfinished upload manifests.
+Keys over 117 UTF-8 bytes use SHA-256 filenames with original UTF-8 mappings
+under each bucket's `.keys` directory; shorter keys retain their legacy hex
+filenames. Checks and backups validate and preserve these mappings. Keys support
+up to 1024 UTF-8 bytes. Use this version of the server and administration tool
+when opening storage containing long keys; older versions do not understand it.
+Mappings may remain after object deletion and are removed with their bucket.
 Bucket policies are validated against the server's supported public-read subset;
 malformed, duplicate, or unsupported policy fields cause checks to fail.
 Queued webhook events are validated against their filename IDs and JSON envelope.

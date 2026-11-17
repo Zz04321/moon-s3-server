@@ -19,8 +19,9 @@ MOON_S3_CONFIG=./deploy/config.example.json \
 file selected, the existing defaults apply. Keys are lowercase versions of the
 environment variable suffix: `root`, `listen`, `access_key`, `secret_key`,
 `cors_origin`, `multipart_ttl_seconds`, `webhook_url`, `webhook_secret`,
-`webhook_timeout_ms` and `shutdown_timeout_ms`. The three timeout/lifetime
-settings are JSON integers; all other settings are strings. Unknown keys,
+`webhook_timeout_ms`, `shutdown_timeout_ms`, `max_request_bytes`,
+`max_buffered_bytes`, `max_connections` and `request_timeout_ms`. The timeout,
+lifetime and resource-limit settings are JSON integers; all other settings are strings. Unknown keys,
 duplicate keys, invalid types and unreadable files fail startup.
 
 Environment variables override matching file values, including empty strings;
@@ -33,6 +34,47 @@ Configuration is loaded once at startup; restart to apply changes.
 `MOON_S3_SHUTDOWN_TIMEOUT_MS` defaults to `10000` and accepts 100–300000 ms.
 `MOON_S3_WEBHOOK_TIMEOUT_MS` accepts 100–60000 ms; multipart TTL accepts
 1–31536000 seconds. Invalid ranges fail startup.
+
+Request bodies default to at most 64 MiB each, with a shared 128 MiB buffered
+payload budget. Both limits can be configured up to 512 MiB; the shared budget
+must be at least the per-request limit. This is a payload budget, not a process
+RSS limit: parsing, hashing and buffer copies require additional memory. Fixed
+Content-Length requests exceeding the per-request limit receive 413 immediately;
+chunked requests are bounded while reading. Shared-budget exhaustion returns
+503 SlowDown. Both responses close the connection. Limits apply before
+authentication, and capacity is released on completion, error or timeout.
+
+`max_connections` defaults to 128 (range 1–4096); excess connections are closed.
+`request_timeout_ms` defaults to 30000 (range 100–3600000) and bounds each header
+read, then separately bounds request handling including body reads, lock waits
+and response writes. Timeout closes the connection; a write may have committed,
+so clients must inspect object state before retrying a conditional operation.
+Metadata rejects control characters, Content-Type over 1024 UTF-8 bytes and
+parsed request headers/target over 16 KiB. The HTTP dependency parses headers
+before this size check; also configure a raw header-size limit at the reverse
+proxy. Upload part sizes must fit the configured request limit. Use
+`python3 scripts/safety_regression.py` to verify rejection and cleanup behavior.
+
+Unsupported S3 subresources (including tagging/ACL APIs), encryption, custom
+metadata and checksum algorithms other than CRC32 receive 501 without changing objects.
+Unknown query parameters are rejected; `x-id` is accepted for SDK operation IDs.
+Content-MD5 is validated: malformed digests receive InvalidDigest and mismatches
+receive BadDigest. Object keys and query strings require valid percent encoding
+and UTF-8.
+Request CRC32 uses the Base64 big-endian digest and is verified when present,
+including SDK-generated required checksums on CORS and policy requests. A CRC32
+algorithm declaration requires its matching digest. Response checksum generation
+and checksum trailers remain unsupported.
+Read requests may ask for `ChecksumMode=ENABLED`; optional response checksums
+are omitted. This preserves SDK public-read behavior without claiming response
+checksum generation.
+
+Object PUT, CopyObject, DELETE and multipart completion support If-Match and
+If-None-Match under the mutation lock. If-Match accepts strong ETags or `*`;
+If-None-Match supports `*` only. Failed conditions return 412 without mutating
+objects or consuming multipart uploads. Date conditions on writes and conditions
+on multipart initiation/part upload/abort are rejected. Read conditions retain
+their existing behavior.
 
 ## Shutdown and restart
 
@@ -83,6 +125,7 @@ active while rendering and becomes completed after its response. Durations
 include body reads, lock waits and response writes. These metrics describe the
 HTTP process; they do not report disk capacity or persisted object inventory.
 Labels contain only HTTP statuses, never bucket names or object keys.
+`moon_s3_buffered_request_bytes` exposes the reserved body payload budget.
 
 ## Docker
 

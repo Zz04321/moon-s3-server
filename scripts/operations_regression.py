@@ -121,7 +121,7 @@ def main():
             assert request(port, "POST", "/metrics", authenticated=True)[0] == 405
             assert request(port, "PUT", "/ops-bucket", authenticated=True)[0] == 200
             idle = socket.create_connection(("127.0.0.1", port), timeout=5)
-            connection = slow_put(port, "/ops-bucket/private-key?secret=never-log-this", authenticated=True)
+            connection = slow_put(port, "/ops-bucket/private-key?x-id=never-log-this", authenticated=True)
             time.sleep(0.1)
             server.send_signal(signal.SIGTERM)
             wait_event(log, "shutdown_started")
@@ -171,7 +171,10 @@ def main():
                    '{"root": "a", "root": "b"}', '{"shutdown_timeout_ms": 1.5}',
                    '{"shutdown_timeout_ms": "1000"}', '{"shutdown_timeout_ms": 0}',
                    '{"webhook_timeout_ms": 21474836485000}', '{"root": ""}',
-                   '{"access_key": "a"}', ' ' * 65537, '\xff']
+                   '{"access_key": "a"}', '{"max_request_bytes": 0}',
+                   '{"max_request_bytes": 536870913}', '{"max_connections": 4097}',
+                   '{"max_buffered_bytes": 1}', '{"request_timeout_ms": 99}',
+                   '{"request_timeout_ms": 3600001}', ' ' * 65537, '\xff']
         for content in invalid:
             config.write_bytes(content.encode("latin1"))
             result = subprocess.run([str(BINARY)], env=environment, capture_output=True, timeout=5)

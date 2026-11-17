@@ -138,6 +138,7 @@ async fn recover_object(config : Config, bucket : String, key : String) -> Unit 
 ///|
 async fn prepare_object(config : Config, bucket : String, key : String) -> Unit {
   recover_object(config, bucket, key)
+  ensure_key_mapping(config, bucket, key)
   for
     path in [
       object_file(config, bucket, key) + ".pending",
@@ -235,16 +236,20 @@ async fn recover_bucket(config : Config, bucket : String) -> Unit {
     allow_missing=true,
   )
   let abandoned : Array[String] = []
+  let mappings = bucket_dir(config, bucket) + "/.keys"
+  if @fs.exists(mappings) {
+    for entry in @fs.readdir(mappings, include_hidden=true) {
+      if entry.has_suffix(".tmp") {
+        @fs.remove(mappings + "/" + entry)
+      } else {
+        ignore(storage_key(config, bucket, entry))
+      }
+    }
+  }
   for entry in @fs.readdir(directory, include_hidden=false) {
     if entry.has_suffix(".object.txn") {
       let encoded = entry[:entry.length() - 11].to_owned()
-      let key = match @core.filename_to_key(encoded) {
-        Some(key) => key
-        None => raise Failure("Invalid transaction filename: \{entry}")
-      }
-      if @core.key_to_filename(key) != encoded {
-        raise Failure("Noncanonical transaction filename: \{entry}")
-      }
+      let key = storage_key(config, bucket, encoded)
       recover_object(config, bucket, key)
     } else if entry.has_suffix(".object.pending") ||
       entry.has_suffix(".meta.pending") ||
@@ -268,10 +273,7 @@ async fn recover_bucket(config : Config, bucket : String) -> Unit {
       raise Failure("Version history without bucket configuration")
     }
     for encoded in @fs.readdir(history, include_hidden=false) {
-      let key = match @core.filename_to_key(encoded) {
-        Some(key) if @core.key_to_filename(key) == encoded => key
-        _ => raise Failure("Invalid history key: \{encoded}")
-      }
+      let key = storage_key(config, bucket, encoded)
       let pending = version_dir(config, bucket, key) + "/.pending"
       if @fs.exists(pending) {
         @fs.rmdir(pending, recursive=true)

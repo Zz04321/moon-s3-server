@@ -94,17 +94,13 @@ async fn list_versions(
   let keys : Map[String, Bool] = Map([])
   for entry in @fs.readdir(objects_dir(config, bucket), include_hidden=false) {
     if entry.has_suffix(".object") {
-      if @core.filename_to_key(entry[:entry.length() - 7]) is Some(key) {
-        keys[key] = true
-      }
+      keys[storage_key(config, bucket, entry[:entry.length() - 7].to_owned())] = true
     }
   }
   let history = bucket_dir(config, bucket) + "/.versions"
   if @fs.exists(history) {
     for entry in @fs.readdir(history, include_hidden=false) {
-      if @core.filename_to_key(entry) is Some(key) {
-        keys[key] = true
-      }
+      keys[storage_key(config, bucket, entry)] = true
     }
   }
   let ordered = keys.keys().to_array()

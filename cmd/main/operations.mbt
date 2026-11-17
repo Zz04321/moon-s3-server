@@ -3,6 +3,7 @@ struct RequestTrace {
   id : Int64
   mut status : Int32
   mut ended : Bool
+  mut close_after : Bool
 }
 
 ///|
@@ -23,6 +24,7 @@ struct Runtime {
   mut completed : Int64
   mut errors : Int64
   mut duration_ms : Int64
+  mut buffered_bytes : Int32
   statuses : Map[Int32, Int64]
   connections : Map[Int64, LiveConnection]
 }
@@ -39,6 +41,7 @@ fn Runtime::new() -> Runtime {
     completed: 0L,
     errors: 0L,
     duration_ms: 0L,
+    buffered_bytes: 0,
     statuses: Map([]),
     connections: Map([]),
   }
@@ -71,6 +74,7 @@ fn metrics(runtime : Runtime) -> String {
     "# TYPE moon_s3_draining gauge\nmoon_s3_draining \{if runtime.draining { 1 } else { 0 }}\n" +
     "# TYPE moon_s3_connections gauge\nmoon_s3_connections \{runtime.connections.length()}\n" +
     "# TYPE moon_s3_requests_active gauge\nmoon_s3_requests_active \{runtime.active}\n" +
+    "# TYPE moon_s3_buffered_request_bytes gauge\nmoon_s3_buffered_request_bytes \{runtime.buffered_bytes}\n" +
     "# TYPE moon_s3_requests_total counter\n"
   let statuses = runtime.statuses.keys().to_array()
   statuses.sort()
@@ -87,7 +91,13 @@ async fn serve_connection(config : Config, connection : LiveConnection) -> Unit 
   let runtime = config.runtime
   defer connection.raw.close()
   while !runtime.draining {
-    let request = connection.raw.read_request()
+    let request = match
+      @async.with_timeout_opt(config.request_timeout, () => {
+        connection.raw.read_request()
+      }) {
+      Some(request) => request
+      None => return
+    }
     if runtime.draining {
       break
     }
@@ -98,6 +108,7 @@ async fn serve_connection(config : Config, connection : LiveConnection) -> Unit 
       id: runtime.sequence,
       status: 0,
       ended: false,
+      close_after: false,
     }
     let started = @async.now()
     defer {
@@ -118,11 +129,25 @@ async fn serve_connection(config : Config, connection : LiveConnection) -> Unit 
       })
     }
     try {
-      handle_request(config, request, connection.raw, connection.raw, trace)
-      if !trace.ended {
-        connection.raw.end_response()
+      let finished = @async.with_timeout_opt(config.request_timeout, () => {
+        handle_request(config, request, connection.raw, connection.raw, trace)
+        if !trace.close_after {
+          if !trace.ended {
+            connection.raw.end_response()
+          }
+          connection.raw.skip_request_body()
+        }
+      })
+      if finished is None {
+        runtime.errors += 1L
+        log_event(
+          "warn", "request_timeout", "Request deadline exceeded; connection closed.",
+        )
+        return
       }
-      connection.raw.skip_request_body()
+      if trace.close_after {
+        return
+      }
     } catch {
       _ => {
         runtime.errors += 1L
@@ -152,6 +177,10 @@ async fn run_service(config : Config, server : @http.Server) -> Unit {
       let mut connection_id = 0L
       while !runtime.draining {
         let (raw, _) = server.accept()
+        if runtime.connections.length() >= config.max_connections {
+          raw.close()
+          continue
+        }
         if runtime.draining {
           raw.close()
           break

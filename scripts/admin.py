@@ -243,6 +243,18 @@ def validate_event(path, identity):
 
 
 def inspect_storage(root, entries):
+    def stored_key(bucket, filename):
+        if filename.startswith("k-"):
+            require(re.fullmatch(r"k-[0-9a-f]{64}", filename), "Invalid long key filename")
+            mapping = f"{bucket}/.keys/{filename}"
+            require(entries.get(mapping, {}).get("kind") == "file"
+                    and 117 < entries[mapping]["size"] <= 1024, f"Missing or invalid long key mapping: {mapping}")
+            value = (root / mapping).read_bytes()
+            value.decode("utf-8")
+            require("k-" + hashlib.sha256(value).hexdigest() == filename, f"Long key mapping checksum mismatch: {mapping}")
+        else:
+            require(valid_key(filename) and len(filename) <= 234, f"Invalid encoded storage key: {filename}")
+
     buckets = set()
     objects = uploads = total_bytes = 0
     warnings = []
@@ -264,8 +276,11 @@ def inspect_storage(root, entries):
         buckets.add(bucket)
         if len(parts) == 1:
             require(record["kind"] == "directory", f"Bucket is not a directory: {name}")
-        elif len(parts) == 2 and parts[1] in ("objects", ".uploads", ".versions"):
+        elif len(parts) == 2 and parts[1] in ("objects", ".uploads", ".versions", ".keys"):
             require(record["kind"] == "directory", f"Expected a directory: {name}")
+        elif len(parts) == 3 and parts[1] == ".keys":
+            require(record["kind"] == "file", f"Expected a long key mapping file: {name}")
+            stored_key(bucket, parts[2])
         elif len(parts) == 2 and parts[1] == ".created":
             require(record["kind"] == "file" and record["size"] <= 32, f"Invalid bucket creation time: {name}")
             require(re.fullmatch(r"[0-9]+", (root / name).read_text().strip()), f"Invalid bucket creation time: {name}")
@@ -285,7 +300,7 @@ def inspect_storage(root, entries):
         elif len(parts) == 2 and parts[1] == ".versioning.tmp":
             raise AdminError(f"Unfinished versioning update: {name}; start the server to recover, then stop it and retry")
         elif len(parts) in (3, 4, 5) and parts[1] == ".versions":
-            require(valid_key(parts[2]), f"Invalid version key: {name}")
+            stored_key(bucket, parts[2])
             if len(parts) >= 4:
                 require(re.fullmatch(r"[0-9a-f]{64}", parts[3]), f"Unfinished or invalid version directory: {name}; start the server to recover")
             require(record["kind"] == ("file" if len(parts) == 5 else "directory"), f"Invalid version storage entry: {name}")
@@ -297,7 +312,7 @@ def inspect_storage(root, entries):
             require(filename.endswith((".object", ".meta")),
                     f"Unfinished transaction or unknown file: {name}; start the server to recover, then stop it and retry")
             encoded, suffix = filename.rsplit(".", 1)
-            require(valid_key(encoded), f"Invalid encoded object key: {name}")
+            stored_key(bucket, encoded)
             companion = f"{bucket}/objects/{encoded}." + ("meta" if suffix == "object" else "object")
             require(companion in entries, f"Missing object content or metadata: {name}")
             if suffix == "object":

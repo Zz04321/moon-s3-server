@@ -18,9 +18,15 @@ fn parse_copy_source(value : String) -> (String, String)? {
 ///|
 fn parse_versioned_copy_source(value : String) -> (String, String, String?)? {
   let (path, query) = @core.split_raw_path(value)
+  if !valid_target(if path.has_prefix("/") { value } else { "/" + value }) {
+    return None
+  }
   let (bucket, key) = match parse_copy_source(path) {
     Some(pair) => pair
     None => return None
+  }
+  if !valid_object_key(key) {
+    return None
   }
   if query.is_empty() {
     return Some((bucket, key, None))

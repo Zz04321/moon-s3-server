@@ -17,7 +17,7 @@ fn valid_version_id(id : String) -> Bool {
 
 ///|
 fn version_dir(config : Config, bucket : String, key : String) -> String {
-  bucket_dir(config, bucket) + "/.versions/" + @core.key_to_filename(key)
+  bucket_dir(config, bucket) + "/.versions/" + storage_filename(key)
 }
 
 ///|
@@ -220,6 +220,7 @@ async fn ensure_version_directory(
   bucket : String,
   key : String,
 ) -> String {
+  ensure_key_mapping(config, bucket, key)
   let parent = bucket_dir(config, bucket) + "/.versions"
   @fs.mkdir(parent, allow_exist=true)
   let base = version_dir(config, bucket, key)
@@ -392,7 +393,11 @@ async fn commit_version(
     modified,
     size: 0L,
   }
-  @fs.write_file(stage + "/record", version_record(version), sync=Full)
+  let record = version_record(version)
+  if @utf8.encode(record).length() > 65536 {
+    raise Failure("Version record exceeds 64 KiB")
+  }
+  @fs.write_file(stage + "/record", record, sync=Full)
   sync_directory(stage)
   sync_directory(base)
   let event = object_event(

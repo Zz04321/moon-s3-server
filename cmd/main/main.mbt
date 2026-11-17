@@ -13,6 +13,10 @@ struct Config {
   webhook_timeout : Int32
   shutdown_timeout : Int32
   runtime : Runtime
+  max_request_bytes : Int32
+  max_buffered_bytes : Int32
+  max_connections : Int32
+  request_timeout : Int32
 }
 
 ///|
@@ -65,6 +69,22 @@ async fn load_config() -> Config {
       300000,
     ),
     runtime: Runtime::new(),
+    max_request_bytes: bounded_setting(
+      setting("max_request_bytes", "67108864"),
+      1,
+      536870912,
+    ),
+    max_buffered_bytes: bounded_setting(
+      setting("max_buffered_bytes", "134217728"),
+      1,
+      536870912,
+    ),
+    max_connections: bounded_setting(setting("max_connections", "128"), 1, 4096),
+    request_timeout: bounded_setting(
+      setting("request_timeout_ms", "30000"),
+      100,
+      3600000,
+    ),
   }
 }
 
@@ -207,12 +227,12 @@ fn objects_dir(config : Config, bucket : String) -> String {
 
 ///|
 fn object_file(config : Config, bucket : String, key : String) -> String {
-  objects_dir(config, bucket) + "/" + @core.key_to_filename(key) + ".object"
+  objects_dir(config, bucket) + "/" + storage_filename(key) + ".object"
 }
 
 ///|
 fn meta_file(config : Config, bucket : String, key : String) -> String {
-  objects_dir(config, bucket) + "/" + @core.key_to_filename(key) + ".meta"
+  objects_dir(config, bucket) + "/" + storage_filename(key) + ".meta"
 }
 
 ///|
@@ -691,9 +711,13 @@ async fn list_objects(
   let keys : Array[String] = []
   for entry in @fs.readdir(dir, include_hidden=false, sort=true) {
     if entry.has_suffix(".object") {
-      match @core.filename_to_key(entry[:entry.length() - 7]) {
-        Some(key) => if key.has_prefix(prefix) { keys.push(key) }
-        None => ()
+      let key = storage_key(
+        config,
+        bucket,
+        entry[:entry.length() - 7].to_owned(),
+      )
+      if key.has_prefix(prefix) {
+        keys.push(key)
       }
     }
   }
@@ -792,6 +816,24 @@ async fn handle_request(
   raw_conn : @http.ServerConnection,
   trace : RequestTrace,
 ) -> Unit {
+  let initial : ResponseConnection = {
+    raw: raw_conn,
+    cors_headers: Map([]),
+    operation_headers: Map([]),
+    head: request.meth is Head,
+    trace,
+  }
+  if !valid_target(request.path) || !valid_request_headers(request) {
+    trace.close_after = true
+    send_error(
+      initial,
+      400,
+      "InvalidRequest",
+      "Invalid UTF-8 target, header value, framing or metadata size.",
+      config.cors_origin,
+    )
+    return
+  }
   let cors = request_cors(config, request) catch {
     error => {
       let conn : ResponseConnection = {
@@ -813,7 +855,8 @@ async fn handle_request(
     trace,
   }
   let (raw_path, query_text) = @core.split_raw_path(request.path)
-  if raw_path == "/healthz" {
+  if raw_path == "/healthz" && (request.meth is Get || request.meth is Head) {
+    trace.close_after = true
     conn.send_response(200, "OK", extra_headers={ "Content-Type": "text/plain" })
     conn.write("ok\n")
     conn.end_response()
@@ -835,7 +878,49 @@ async fn handle_request(
     }
     return
   }
-  let request_body = body.read_all().binary()
+  if range_number(header(request.headers, "content-length")) is Some(size) &&
+    size > config.max_request_bytes.to_int64() {
+    trace.close_after = true
+    send_error(
+      conn,
+      413,
+      "EntityTooLarge",
+      "Request body exceeds the configured limit.",
+      config.cors_origin,
+    )
+    return
+  }
+  let buffer = Buffer()
+  let mut reserved = 0
+  defer {
+    config.runtime.buffered_bytes -= reserved
+  }
+  while body.read_some(max_len=16384) is Some(chunk) {
+    if chunk.length() > config.max_request_bytes - reserved ||
+      chunk.length() > config.max_buffered_bytes - config.runtime.buffered_bytes {
+      trace.close_after = true
+      send_error(
+        conn,
+        if chunk.length() > config.max_request_bytes - reserved {
+          413
+        } else {
+          503
+        },
+        if chunk.length() > config.max_request_bytes - reserved {
+          "EntityTooLarge"
+        } else {
+          "SlowDown"
+        },
+        "Request body exceeds available buffering capacity.",
+        config.cors_origin,
+      )
+      return
+    }
+    reserved += chunk.length()
+    config.runtime.buffered_bytes += chunk.length()
+    buffer.write_bytes(chunk.clamped_view())
+  }
+  let request_body = buffer.to_bytes()
   if !authorize(config, request, raw_path, params, request_body) &&
     !public_read_candidate(config, request, raw_path, params) {
     send_error(
@@ -846,6 +931,77 @@ async fn handle_request(
       config.cors_origin,
     )
     return
+  }
+  if unsupported_query(params) || unsupported_headers(request) {
+    send_error(
+      conn,
+      501,
+      "NotImplemented",
+      "The requested S3 subresource or option is not supported.",
+      config.cors_origin,
+    )
+    return
+  }
+  if !valid_operation_query(request, params) {
+    send_error(
+      conn,
+      400,
+      "InvalidRequest",
+      "Query parameters do not match the requested operation.",
+      config.cors_origin,
+    )
+    return
+  }
+  if request.headers.contains(@http.CaseInsensitiveString("content-md5")) {
+    let digest = @base64.decode(header(request.headers, "content-md5")) catch {
+      _ => {
+        send_error(
+          conn,
+          400,
+          "InvalidDigest",
+          "Content-MD5 must be a Base64 MD5 digest.",
+          config.cors_origin,
+        )
+        return
+      }
+    }
+    if digest.length() != 16 {
+      send_error(
+        conn,
+        400,
+        "InvalidDigest",
+        "Content-MD5 must contain 16 bytes.",
+        config.cors_origin,
+      )
+      return
+    }
+    if @crypto.bytes_to_hex_string(digest) !=
+      @core.md5_hex(request_body.clamped_view()) {
+      send_error(
+        conn,
+        400,
+        "BadDigest",
+        "Content-MD5 does not match the request body.",
+        config.cors_origin,
+      )
+      return
+    }
+  }
+  if request.headers.contains(
+      @http.CaseInsensitiveString("x-amz-checksum-crc32"),
+    ) ||
+    header(request.headers, "x-amz-sdk-checksum-algorithm") == "CRC32" {
+    if header(request.headers, "x-amz-checksum-crc32") !=
+      crc32_base64(request_body) {
+      send_error(
+        conn,
+        400,
+        "BadDigest",
+        "CRC32 does not match the request body.",
+        config.cors_origin,
+      )
+      return
+    }
   }
   if raw_path == "/metrics" {
     if !(request.meth is Get || request.meth is Head) || !params.is_empty() {
@@ -910,6 +1066,52 @@ async fn handle_request(
           config.cors_origin,
         )
         return
+      }
+      if name == "healthz" || name == "metrics" {
+        send_error(
+          conn,
+          400,
+          "InvalidBucketName",
+          "This bucket name is reserved for server operations.",
+          config.cors_origin,
+        )
+        return
+      }
+      if key is Some(object_key) && !valid_object_key(object_key) {
+        send_error(
+          conn,
+          400,
+          "KeyTooLongError",
+          "Object keys must contain 1-1024 UTF-8 bytes.",
+          config.cors_origin,
+        )
+        return
+      }
+      if (request.meth is Put || request.meth is Post || request.meth is Delete) &&
+        key is Some(object_key) {
+        let conditional = !header(request.headers, "if-match").is_empty() ||
+          !header(request.headers, "if-none-match").is_empty()
+        if !header(request.headers, "if-modified-since").is_empty() ||
+          !header(request.headers, "if-unmodified-since").is_empty() ||
+          (
+            conditional &&
+            multipart &&
+            !(request.meth is Post &&
+            @core.query_value(params, "uploadId") is Some(_) &&
+            @core.query_value(params, "partNumber") is None)
+          ) {
+          send_error(
+            conn,
+            501,
+            "NotImplemented",
+            "These conditions are not supported for this write operation.",
+            config.cors_origin,
+          )
+          return
+        }
+        if !check_write_precondition(config, request, name, object_key, conn) {
+          return
+        }
       }
       let selectors = params.filter(param => {
         ["cors", "versioning", "versions", "versionId", "policy"].contains(
@@ -1087,6 +1289,15 @@ async fn start_server() -> Unit {
       )
       @env.exit(1)
     }
+  }
+  if config.max_request_bytes == 0 ||
+    config.max_buffered_bytes < config.max_request_bytes ||
+    config.max_connections == 0 ||
+    config.request_timeout == 0 {
+    log_event(
+      "error", "configuration_invalid", "Invalid request resource limits: expected positive bounded limits with max_buffered_bytes >= max_request_bytes.",
+    )
+    @env.exit(1)
   }
   if config.root.trim().is_empty() || config.shutdown_timeout == 0 {
     log_event(

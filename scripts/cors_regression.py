@@ -193,7 +193,7 @@ def main():
                                 [{"AllowedOrigins": ["*"], "AllowedMethods": ["GET"], "ExposeHeaders": ["*"]}]]:
                     error(request("PUT", bucket + "?cors", configuration(invalid)), 400, "InvalidRequest")
                 error(request("PUT", bucket + "?cors", b" " * 65537), 400, "MalformedXML")
-                error(request("PUT", bucket + "?cors", xml, {"content-md5": "wrong"}), 400, "BadDigest")
+                error(request("PUT", bucket + "?cors", xml, {"content-md5": "wrong"}), 400, "InvalidDigest")
                 assert request("GET", bucket + "?cors")[2] == saved
                 too_many = [{"AllowedOrigins": ["*"], "AllowedMethods": ["GET"]}] * 101
                 error(request("PUT", bucket + "?cors", configuration(too_many)), 400, "MalformedXML")

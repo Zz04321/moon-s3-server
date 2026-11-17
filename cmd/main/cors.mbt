@@ -32,6 +32,9 @@ async fn ResponseConnection::send_response(
     headers[name] = value
   }
   headers[@http.CaseInsensitiveString("x-moon-request-id")] = self.trace.id.to_string()
+  if self.trace.close_after {
+    headers[@http.CaseInsensitiveString("Connection")] = "close"
+  }
   self.raw.send_response(status, reason, extra_headers=headers)
   self.trace.status = status
 }
