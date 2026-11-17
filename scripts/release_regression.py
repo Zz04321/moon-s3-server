@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import hashlib
+import io
 import json
 import os
 import pathlib
@@ -12,10 +13,47 @@ import time
 
 from auth_regression import ACCESS_KEY, SECRET_KEY
 from operations_regression import free_port, request
+from release_bundle import extract_verified
 
 
 def run(*command, environment=None, cwd=None):
     return subprocess.run(command, env=environment, cwd=cwd, capture_output=True, check=True, timeout=30).stdout
+
+
+def invalid_bundles(directory):
+    root = "moon-s3-server-v0.1.0-linux-x86_64"
+    archive = directory / "fixture.tar.gz"
+    manifest_path = directory / "manifest.json"
+    for scenario in ["checksum", "traversal", "absolute-manifest", "symlink", "duplicate", "inventory", "content", "dirty"]:
+        manifest = dict(version="v0.1.0", target="linux-x86_64", dirty=scenario == "dirty",
+                        files={"sample": hashlib.sha256(b"safe").hexdigest()})
+        if scenario == "absolute-manifest":
+            manifest["files"] = {"/outside": hashlib.sha256(b"safe").hexdigest()}
+        data = (json.dumps(manifest) + "\n").encode()
+        manifest_path.write_bytes(data)
+        with tarfile.open(archive, "w:gz") as bundle:
+            for name, content in [("manifest.json", data), ("sample", b"altered" if scenario == "content" else b"safe")]:
+                member = tarfile.TarInfo(root + "/" + name)
+                member.size = len(content)
+                bundle.addfile(member, io.BytesIO(content))
+            if scenario in ["traversal", "symlink", "duplicate", "inventory"]:
+                name = {"traversal": "../outside", "symlink": root + "/link",
+                        "duplicate": root + "/sample", "inventory": root + "/extra"}[scenario]
+                member = tarfile.TarInfo(name)
+                if scenario == "symlink":
+                    member.type, member.linkname = tarfile.SYMTYPE, "../outside"
+                bundle.addfile(member, io.BytesIO(b""))
+        sums = "".join(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n" for path in [archive, manifest_path])
+        (directory / "SHA256SUMS").write_text(sums if scenario != "checksum" else sums.replace(sums[:64], "0" * 64, 1))
+        destination = directory / scenario
+        destination.mkdir()
+        try:
+            extract_verified(archive, destination)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"Unsafe bundle accepted: {scenario}")
+        assert not (directory / "outside").exists()
 
 
 def main():
@@ -23,30 +61,13 @@ def main():
     parser.add_argument("archive", type=pathlib.Path)
     args = parser.parse_args()
     archive = args.archive.resolve()
-    checked = set()
-    for line in (archive.parent / "SHA256SUMS").read_text().splitlines():
-        digest, name = line.split("  ")
-        assert pathlib.Path(name).name == name
-        assert name not in checked
-        checked.add(name)
-        assert hashlib.sha256((archive.parent / name).read_bytes()).hexdigest() == digest
-    assert checked == {archive.name, "manifest.json"}
+    with tempfile.TemporaryDirectory(prefix="moon-s3-release-invalid-") as temporary:
+        invalid_bundles(pathlib.Path(temporary))
     with tempfile.TemporaryDirectory(prefix="moon-s3-release-") as temporary:
         directory = pathlib.Path(temporary)
-        with tarfile.open(archive) as source:
-            members = source.getmembers()
-            assert all(member.isfile() for member in members)
-            assert all(not pathlib.PurePosixPath(member.name).is_absolute() and ".." not in pathlib.PurePosixPath(member.name).parts for member in members)
-            source.extractall(directory, filter="data")
-        bundles = list(directory.iterdir())
-        assert len(bundles) == 1
-        bundle = bundles[0]
-        manifest = json.loads((bundle / "manifest.json").read_text())
-        assert (bundle / "manifest.json").read_bytes() == (archive.parent / "manifest.json").read_bytes()
+        bundle, manifest = extract_verified(archive, directory, allow_dirty=True)
         names = {str(path.relative_to(bundle)) for path in bundle.rglob("*") if path.is_file()}
         assert names == set(manifest["files"]) | {"manifest.json"}
-        for name, digest in manifest["files"].items():
-            assert hashlib.sha256((bundle / name).read_bytes()).hexdigest() == digest
         assert not any(name.startswith((".git/", ".aws/", "data/")) or name == "proposal.md" for name in names)
         for script in ["moon_s3.py", "admin.py", "console.py", "presign.py"]:
             run(sys.executable, str(bundle / "scripts" / script), "--help", cwd=directory)

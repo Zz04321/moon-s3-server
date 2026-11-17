@@ -15,6 +15,8 @@ MoonBit module name remains `Zz04321/moon-s3-server` to preserve imports.
   limits, then all six SDK suites. Logs/JSON results are retained for 30 days.
 - **Release bundle** runs manually. It validates local regressions, packages
   and exercises the native release binary, and checks Docker deployment.
+  It also runs the [deployment recovery drill](recovery-drill.md); JSON/log
+  evidence is saved separately as `deployment-drill-COMMIT` for 30 days.
   Download its artifact for review. By default it creates no GitHub release
   or tag. Enabling `draft_release` creates a draft prerelease only after
   validation; existing releases are never overwritten. Review compatibility
@@ -113,6 +115,9 @@ source Dockerfile instead expects `_build/.../main.exe`; the packager replaces
 it with [Dockerfile.release](../deploy/Dockerfile.release) inside the bundle.
 
 ## Delivery checkpoint
+
+See [the current acceptance checkpoint](acceptance.md) for verified release
+evidence and remaining operator sign-off.
 
 Before publishing: confirm native CI and manual compatibility acceptance on
 the exact release commit, inspect the manifest/checksums, and retain the

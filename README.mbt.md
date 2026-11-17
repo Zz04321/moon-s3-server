@@ -148,6 +148,7 @@ The console regression also supports `--browser` with Playwright Chromium instal
 Pushes to `main` and pull requests run native CI and all local regression suites.
 External client acceptance and release packaging are manual Actions workflows.
 See [release bundles and validation](docs/releasing.md) for installation and publishing.
+Run the [deployment recovery drill](docs/recovery-drill.md) before delivery or storage migration.
 
 ## License
 

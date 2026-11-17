@@ -171,6 +171,8 @@ concurrent uploads and part sizes through the proxy and container resource
 limits. Keep data on a durable local filesystem and follow
 [offline backup and restore](administration.md). The Web console runs as a
 separate process; see [console deployment](console.md).
+Before delivery or storage migration, run the [deployment recovery drill](recovery-drill.md)
+and retain its release-bound report; see the [acceptance checkpoint](acceptance.md).
 
 ## TLS reverse proxy
 

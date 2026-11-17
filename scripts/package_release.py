@@ -12,7 +12,7 @@ import tarfile
 
 
 PROJECT = pathlib.Path(__file__).resolve().parents[1]
-RUNTIME_SCRIPTS = ["admin.py", "console.py", "moon_s3.py", "presign.py", "s3_client.py"]
+RUNTIME_SCRIPTS = ["admin.py", "console.py", "moon_s3.py", "presign.py", "s3_client.py", "release_bundle.py", "deployment_drill.py"]
 
 
 def command(*arguments):

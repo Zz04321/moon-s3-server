@@ -33,6 +33,20 @@ jobs:
           tar -xzf /tmp/moon-s3-release/*.tar.gz -C /tmp/moon-s3-release-extracted
           docker build -t moon-s3-server:release-check /tmp/moon-s3-release-extracted/moon-s3-server-*-linux-x86_64
           python3 scripts/docker_smoke.py --image moon-s3-server:release-check
+      - name: Deployment recovery drill
+        run: |
+          mkdir -p /tmp/moon-s3-drill-evidence
+          set -o pipefail
+          python3 scripts/deployment_drill.py /tmp/moon-s3-release/*.tar.gz \
+            --report /tmp/moon-s3-drill-evidence/drill.json 2>&1 | tee /tmp/moon-s3-drill-evidence/drill.log
+      - name: Save recovery evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-drill-${{ github.sha }}
+          path: /tmp/moon-s3-drill-evidence/
+          if-no-files-found: warn
+          retention-days: 30
       - uses: actions/upload-artifact@v4
         with:
           name: release-${{ github.sha }}
