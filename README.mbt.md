@@ -21,6 +21,7 @@ path-style URLs.
 - Durable JSON webhooks for object creation and deletion, with retries and optional HMAC signatures.
 - Standard-library management CLI for files, versions, access, CORS, multipart cleanup, and offline administration.
 - Web console with a separate admin login, file browsing, transfers, version restore, and bucket settings.
+- JSON configuration, graceful shutdown, structured logs, authenticated metrics, and Docker packaging.
 
 Verified with botocore 1.44.0, including a 100 MiB multipart round trip with
 SHA-256 validation. AWS CLI, MinIO `mc`, and Ceph `s3-tests` compatibility
@@ -60,6 +61,7 @@ and run `python3 scripts/console.py`; visit `http://127.0.0.1:9001`.
 
 | Environment variable | Default | Purpose |
 | --- | --- | --- |
+| `MOON_S3_CONFIG` | Unset | JSON configuration file; environment variables override file values |
 | `MOON_S3_ROOT` | `./data` | Data directory |
 | `MOON_S3_LISTEN` | `127.0.0.1:9000` | Listen address |
 | `MOON_S3_ACCESS_KEY` | Unset | Enable SigV4 authentication |
@@ -69,10 +71,13 @@ and run `python3 scripts/console.py`; visit `http://127.0.0.1:9001`.
 | `MOON_S3_WEBHOOK_URL` | Unset | Enable object-event delivery to an HTTP(S) endpoint |
 | `MOON_S3_WEBHOOK_SECRET` | Unset | Sign webhook bodies with HMAC-SHA256 |
 | `MOON_S3_WEBHOOK_TIMEOUT_MS` | `5000` | Callback timeout; 100–60000 milliseconds |
+| `MOON_S3_SHUTDOWN_TIMEOUT_MS` | `10000` | Drain active requests on SIGINT/SIGTERM; 100–300000 milliseconds |
 
 Set both credentials to nonempty values to enable authentication; leaving both
 unset allows anonymous access. Use a trusted network and a TLS reverse proxy
 for deployments beyond localhost.
+See [deployment and operations](docs/deployment.md) for configuration files,
+Docker/Compose, shutdown behavior, JSON logs, and authenticated `GET /metrics`.
 With credentials enabled, buckets default to private. [Bucket policies](docs/access-control.md)
 can grant anonymous object reads while keeping writes and management authenticated.
 
@@ -124,7 +129,7 @@ See [administration](docs/administration.md) for guarantees, limits, and recover
 moon test --target native
 moon info && moon fmt
 bash scripts/smoke.sh
-for suite in auth list object presigned multipart storage copy admin cors version policy event cli console; do
+for suite in auth list object presigned multipart storage copy admin cors version policy event cli console operations; do
   python3 "scripts/${suite}_regression.py"
 done
 ```

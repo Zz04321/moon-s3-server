@@ -317,8 +317,10 @@ async fn dispatch_events(config : Config) -> Unit {
       }
       false
     } catch {
-      error => {
-        println("event delivery failed; queued events retained: \{error}")
+      _ => {
+        log_event(
+          "warn", "webhook_failed", "Event delivery failed; queued events retained.",
+        )
         true
       }
     }

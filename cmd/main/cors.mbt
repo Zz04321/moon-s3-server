@@ -4,6 +4,7 @@ struct ResponseConnection {
   cors_headers : Map[@http.CaseInsensitiveString, String]
   operation_headers : Map[@http.CaseInsensitiveString, String]
   head : Bool
+  trace : RequestTrace
 }
 
 ///|
@@ -30,7 +31,9 @@ async fn ResponseConnection::send_response(
   for name, value in self.operation_headers {
     headers[name] = value
   }
+  headers[@http.CaseInsensitiveString("x-moon-request-id")] = self.trace.id.to_string()
   self.raw.send_response(status, reason, extra_headers=headers)
+  self.trace.status = status
 }
 
 ///|
@@ -66,6 +69,7 @@ async fn ResponseConnection::write_reader(
 ///|
 async fn ResponseConnection::end_response(self : ResponseConnection) -> Unit {
   self.raw.end_response()
+  self.trace.ended = true
 }
 
 ///|

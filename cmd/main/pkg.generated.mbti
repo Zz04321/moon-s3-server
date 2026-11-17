@@ -22,6 +22,8 @@ type DownloadRange
 
 type ListedVersion
 
+type LiveConnection
+
 type MultipartUpload
 
 type ObjectSnapshot
@@ -33,7 +35,11 @@ type PublicReadPolicy
 
 type QueuedEvent
 
+type RequestTrace
+
 type ResponseConnection
+
+type Runtime
 
 #derive(Eq, @debug.Debug)
 type StorageTransaction

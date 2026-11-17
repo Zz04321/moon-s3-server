@@ -11,37 +11,60 @@ struct Config {
   webhook_url : String?
   webhook_secret : String?
   webhook_timeout : Int32
+  shutdown_timeout : Int32
+  runtime : Runtime
 }
 
 ///|
-fn env_or(name : String, fallback : String) -> String {
-  match @env.get_env_var(name) {
-    Some(value) => value
-    None => fallback
+async fn load_config() -> Config {
+  let settings = match @env.get_env_var("MOON_S3_CONFIG") {
+    None => Map([])
+    Some(path) => {
+      let file = @fs.open(path, mode=ReadOnly)
+      defer file.close()
+      let size = file.size()
+      if size > 65536L {
+        raise Failure("Configuration file exceeds 64 KiB")
+      }
+      let data = file.read_exactly(size.to_int())
+      parse_settings(@utf8.decode(data.clamped_view()))
+    }
   }
-}
-
-///|
-fn load_config() -> Config {
-  let access_key = @env.get_env_var("MOON_S3_ACCESS_KEY")
-  let secret_key = @env.get_env_var("MOON_S3_SECRET_KEY")
+  fn setting(name : String, fallback : String) -> String {
+    @env.get_env_var("MOON_S3_" + name.to_upper()).unwrap_or(
+      settings.get(name).unwrap_or(fallback),
+    )
+  }
+  fn optional(name : String) -> String? {
+    match @env.get_env_var("MOON_S3_" + name.to_upper()) {
+      Some(value) => Some(value)
+      None => settings.get(name)
+    }
+  }
   Config::{
-    root: env_or("MOON_S3_ROOT", "./data"),
-    listen: env_or("MOON_S3_LISTEN", "127.0.0.1:9000"),
-    access_key,
-    secret_key,
-    cors_origin: env_or("MOON_S3_CORS_ORIGIN", "*"),
+    root: setting("root", "./data"),
+    listen: setting("listen", "127.0.0.1:9000"),
+    access_key: optional("access_key"),
+    secret_key: optional("secret_key"),
+    cors_origin: setting("cors_origin", "*"),
     mutation_lock: @async.Mutex(),
-    multipart_ttl: range_number(
-      env_or("MOON_S3_MULTIPART_TTL_SECONDS", "604800"),
-    ).unwrap_or(0L),
+    multipart_ttl: range_number(setting("multipart_ttl_seconds", "604800")).unwrap_or(
+      0L,
+    ),
     multipart_cleanup_at: 0L,
-    webhook_url: @env.get_env_var("MOON_S3_WEBHOOK_URL"),
-    webhook_secret: @env.get_env_var("MOON_S3_WEBHOOK_SECRET"),
-    webhook_timeout: parse_list_number(
-      Some(env_or("MOON_S3_WEBHOOK_TIMEOUT_MS", "5000")),
-      0,
-    ).unwrap_or(0),
+    webhook_url: optional("webhook_url"),
+    webhook_secret: optional("webhook_secret"),
+    webhook_timeout: bounded_setting(
+      setting("webhook_timeout_ms", "5000"),
+      100,
+      60000,
+    ),
+    shutdown_timeout: bounded_setting(
+      setting("shutdown_timeout_ms", "10000"),
+      100,
+      300000,
+    ),
+    runtime: Runtime::new(),
   }
 }
 
@@ -767,6 +790,7 @@ async fn handle_request(
   request : @http.Request,
   body : &@io.Reader,
   raw_conn : @http.ServerConnection,
+  trace : RequestTrace,
 ) -> Unit {
   let cors = request_cors(config, request) catch {
     error => {
@@ -775,6 +799,7 @@ async fn handle_request(
         cors_headers: Map([]),
         operation_headers: Map([]),
         head: request.meth is Head,
+        trace,
       }
       storage_error(config, conn, error)
       return
@@ -785,6 +810,7 @@ async fn handle_request(
     cors_headers: cors.headers,
     operation_headers: Map([]),
     head: request.meth is Head,
+    trace,
   }
   let (raw_path, query_text) = @core.split_raw_path(request.path)
   if raw_path == "/healthz" {
@@ -819,6 +845,24 @@ async fn handle_request(
       "Signature verification failed.",
       config.cors_origin,
     )
+    return
+  }
+  if raw_path == "/metrics" {
+    if !(request.meth is Get || request.meth is Head) || !params.is_empty() {
+      send_error(
+        conn,
+        405,
+        "MethodNotAllowed",
+        "Metrics requires GET or HEAD without query parameters.",
+        config.cors_origin,
+      )
+      return
+    }
+    conn.send_response(200, "OK", extra_headers={
+      "Content-Type": "text/plain; version=0.0.4; charset=utf-8",
+    })
+    conn.write(metrics(config.runtime))
+    conn.end_response()
     return
   }
   let (bucket, key) = @core.split_bucket_key(raw_path)
@@ -949,7 +993,8 @@ async fn handle_request(
       if multipart {
         handle_multipart(config, request, name, key, params, request_body, conn) catch {
           error => {
-            println("multipart request failed: \{error}")
+            ignore(error)
+            log_event("error", "multipart_failed", "Multipart request failed.")
             send_error(
               conn,
               500,
@@ -1033,8 +1078,22 @@ async fn handle_request(
 }
 
 ///|
-async fn main {
-  let config = load_config()
+async fn start_server() -> Unit {
+  @signal.set_global_cancellation_signals([SIGINT, SIGTERM])
+  let config = load_config() catch {
+    _ => {
+      log_event(
+        "error", "configuration_invalid", "Cannot load configuration: expected a readable UTF-8 JSON object with known settings and valid types.",
+      )
+      @env.exit(1)
+    }
+  }
+  if config.root.trim().is_empty() || config.shutdown_timeout == 0 {
+    log_event(
+      "error", "configuration_invalid", "Data root must be nonempty; MOON_S3_SHUTDOWN_TIMEOUT_MS must be between 100 and 300000.",
+    )
+    @env.exit(1)
+  }
   if (config.webhook_url is Some(url) && webhook_address(url) is None) ||
     (
       config.webhook_secret is Some(secret) &&
@@ -1042,18 +1101,20 @@ async fn main {
     ) ||
     config.webhook_timeout < 100 ||
     config.webhook_timeout > 60000 {
-    println(
-      "Invalid webhook configuration: expected an HTTP(S) URL, an optional nonempty secret, and timeout 100-60000 ms.",
+    log_event(
+      "error", "configuration_invalid", "Invalid webhook configuration: expected an HTTP(S) URL, an optional nonempty secret, and timeout 100-60000 ms.",
     )
     @env.exit(1)
   }
   if config.multipart_ttl < 1L || config.multipart_ttl > 31536000L {
-    println("MOON_S3_MULTIPART_TTL_SECONDS must be between 1 and 31536000.")
+    log_event(
+      "error", "configuration_invalid", "MOON_S3_MULTIPART_TTL_SECONDS must be between 1 and 31536000.",
+    )
     @env.exit(1)
   }
   if !valid_credentials(config.access_key, config.secret_key) {
-    println(
-      "MOON_S3_ACCESS_KEY and MOON_S3_SECRET_KEY must both be set and non-empty, or both unset.",
+    log_event(
+      "error", "configuration_invalid", "MOON_S3_ACCESS_KEY and MOON_S3_SECRET_KEY must both be set and non-empty, or both unset.",
     )
     @env.exit(1)
   }
@@ -1065,40 +1126,53 @@ async fn main {
   )
   defer storage_lock.close()
   if !storage_lock.try_lock(Exclusive) {
-    println("Data directory is already in use: \{config.root}")
+    log_event(
+      "error",
+      "storage_locked",
+      "Data directory is already in use: \{config.root}",
+    )
     @env.exit(1)
   }
   recover_storage(config) catch {
     error => {
-      println("Storage recovery failed: \{error}")
+      log_event("error", "recovery_failed", "Storage recovery failed: \{error}")
       @env.exit(1)
     }
   }
   recover_events(config) catch {
     error => {
-      println("Event recovery failed: \{error}")
+      log_event("error", "recovery_failed", "Event recovery failed: \{error}")
       @env.exit(1)
     }
   }
   cleanup_multipart(config)
   let listen = @socket.Addr::parse(config.listen) catch {
     _ => {
-      println("invalid MOON_S3_LISTEN: \{config.listen}")
+      log_event(
+        "error",
+        "configuration_invalid",
+        "invalid MOON_S3_LISTEN: \{config.listen}",
+      )
       @env.exit(1)
     }
   }
-  println("moon-s3-server listening on \{config.listen}, root=\{config.root}")
-  let server = @http.Server(listen)
-  @async.with_task_group(group => {
-    if config.webhook_url is Some(_) {
-      group.spawn_bg(() => dispatch_events(config), no_wait=true)
+  let server = @http.Server(listen, reuse_addr=true)
+  log_event(
+    "info",
+    "server_started",
+    "moon-s3-server listening on \{config.listen}, root=\{config.root}",
+  )
+  serve(config, server)
+}
+
+///|
+async fn main {
+  start_server() catch {
+    _ => {
+      log_event(
+        "error", "startup_failed", "Server startup failed; check data permissions and listen address availability.",
+      )
+      @env.exit(1)
     }
-    server.run_forever((request, body, conn) => {
-      handle_request(config, request, body, conn) catch {
-        error => println("request failed: \{error}")
-      }
-    })
-  }) catch {
-    error => println("server terminated: \{error}")
   }
 }

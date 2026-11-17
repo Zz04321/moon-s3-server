@@ -13,7 +13,8 @@ async fn storage_error(
   conn : ResponseConnection,
   error : Error,
 ) -> Unit {
-  println("storage operation failed: \{error}")
+  ignore(error)
+  log_event("error", "storage_failed", "Storage operation failed.")
   send_error(
     conn,
     500,

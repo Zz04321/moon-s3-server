@@ -1,0 +1,8 @@
+{
+  "listen": "127.0.0.1:9000",
+  "root": "./data",
+  "cors_origin": "*",
+  "multipart_ttl_seconds": 604800,
+  "webhook_timeout_ms": 5000,
+  "shutdown_timeout_ms": 10000
+}

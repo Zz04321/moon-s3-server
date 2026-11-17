@@ -5,6 +5,7 @@ import {
   "moonbitlang/async/http",
   "moonbitlang/async/io",
   "moonbitlang/async/socket",
+  "moonbitlang/async/signal",
   "moonbitlang/core/encoding/utf8",
   "moonbitlang/core/env",
   "moonbitlang/core/json",
@@ -16,3 +17,7 @@ import {
 supported_targets = "+native"
 
 pkgtype(kind: "executable")
+
+options(
+  "native-stub": [ "operations.c" ],
+)
