@@ -7,6 +7,7 @@
   "shutdown_timeout_ms": 10000,
   "max_request_bytes": 67108864,
   "max_buffered_bytes": 134217728,
+  "max_staged_bytes": 536870912,
   "max_connections": 128,
   "request_timeout_ms": 30000
 }

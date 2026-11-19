@@ -15,6 +15,7 @@ struct Config {
   runtime : Runtime
   max_request_bytes : Int32
   max_buffered_bytes : Int32
+  max_staged_bytes : Int32
   max_connections : Int32
   request_timeout : Int32
 }
@@ -76,10 +77,15 @@ async fn load_config() -> Config {
     ),
     max_buffered_bytes: bounded_setting(
       setting("max_buffered_bytes", "134217728"),
-      1,
+      16384,
       536870912,
     ),
     max_connections: bounded_setting(setting("max_connections", "128"), 1, 4096),
+    max_staged_bytes: bounded_setting(
+      setting("max_staged_bytes", "536870912"),
+      1,
+      536870912,
+    ),
     request_timeout: bounded_setting(
       setting("request_timeout_ms", "30000"),
       100,
@@ -153,7 +159,11 @@ fn authorize(
   raw_path : String,
   params : Array[@core.QueryParam],
   body : Bytes,
+  digest? : String,
 ) -> Bool {
+  let actual_hash = digest.unwrap_or_else(() => {
+    @core.sha256_hex(body.clamped_view())
+  })
   match config.access_key {
     None => true
     Some(access_key) =>
@@ -169,6 +179,7 @@ fn authorize(
               access_key,
               secret_key,
               (@env.now() / 1000UL).reinterpret_as_int64(),
+              digest=actual_hash,
             )
           }
           if !signature_time_valid(
@@ -191,11 +202,11 @@ fn authorize(
               }
               let payload_hash = match
                 header(request.headers, "x-amz-content-sha256") {
-                "" => @core.sha256_hex(body.clamped_view())
+                "" => actual_hash
                 value => value
               }
               if payload_hash != "UNSIGNED-PAYLOAD" &&
-                payload_hash != @core.sha256_hex(body.clamped_view()) {
+                payload_hash != actual_hash {
                 return false
               }
               @core.verify_sigv4(
@@ -274,6 +285,7 @@ async fn put_object(
   key : String,
   body : Bytes,
   conn : ResponseConnection,
+  staged? : RequestBody,
 ) -> Unit {
   if !@fs.exists(bucket_dir(config, bucket)) {
     send_error(
@@ -285,18 +297,32 @@ async fn put_object(
     )
     return
   }
-  let etag = @core.md5_hex(body.clamped_view())
+  let etag = match staged {
+    Some(staged) => staged.md5
+    None => @core.md5_hex(body.clamped_view())
+  }
   let content_type = match header(request.headers, "content-type") {
     "" => "application/octet-stream"
     value => value
   }
   try {
     prepare_object(config, bucket, key)
-    @fs.write_file(
-      object_file(config, bucket, key) + ".pending",
-      body,
-      sync=Full,
-    )
+    match staged {
+      Some(staged) => {
+        @fs.rename(
+          staged.path.unwrap(),
+          object_file(config, bucket, key) + ".pending",
+          replace=true,
+        )
+        sync_directory(config.root)
+      }
+      None =>
+        @fs.write_file(
+          object_file(config, bucket, key) + ".pending",
+          body,
+          sync=Full,
+        )
+    }
     conn.set_version(commit_object(config, bucket, key, etag, content_type))
   } catch {
     error => {
@@ -930,38 +956,33 @@ async fn handle_request(
     )
     return
   }
-  let buffer = Buffer()
-  let mut reserved = 0
+  let payload = RequestBody::new(config, request, params, trace.id)
   defer {
-    config.runtime.buffered_bytes -= reserved
+    config.runtime.buffered_bytes -= payload.buffered_size
+    config.runtime.staged_bytes -= payload.staged_size
+    if payload.path is Some(path) {
+      @fs.remove(path, allow_missing=true)
+    }
   }
-  while body.read_some(max_len=16384) is Some(chunk) {
-    if chunk.length() > config.max_request_bytes - reserved ||
-      chunk.length() > config.max_buffered_bytes - config.runtime.buffered_bytes {
+  let accepted = payload.receive(config, request, body, conn) catch {
+    error => {
       trace.close_after = true
-      send_error(
-        conn,
-        if chunk.length() > config.max_request_bytes - reserved {
-          413
-        } else {
-          503
-        },
-        if chunk.length() > config.max_request_bytes - reserved {
-          "EntityTooLarge"
-        } else {
-          "SlowDown"
-        },
-        "Request body exceeds available buffering capacity.",
-        config.cors_origin,
-      )
+      storage_error(config, conn, error)
       return
     }
-    reserved += chunk.length()
-    config.runtime.buffered_bytes += chunk.length()
-    buffer.write_bytes(chunk.clamped_view())
   }
-  let request_body = buffer.to_bytes()
-  if !authorize(config, request, raw_path, params, request_body) &&
+  if !accepted {
+    return
+  }
+  let request_body = payload.data
+  if !authorize(
+      config,
+      request,
+      raw_path,
+      params,
+      request_body,
+      digest=payload.sha256,
+    ) &&
     !public_read_candidate(config, request, raw_path, params) {
     send_error(
       conn,
@@ -1015,8 +1036,7 @@ async fn handle_request(
       )
       return
     }
-    if @crypto.bytes_to_hex_string(digest) !=
-      @core.md5_hex(request_body.clamped_view()) {
+    if @crypto.bytes_to_hex_string(digest) != payload.md5 {
       send_error(
         conn,
         400,
@@ -1031,8 +1051,7 @@ async fn handle_request(
       @http.CaseInsensitiveString("x-amz-checksum-crc32"),
     ) ||
     header(request.headers, "x-amz-sdk-checksum-algorithm") == "CRC32" {
-    if header(request.headers, "x-amz-checksum-crc32") !=
-      crc32_base64(request_body) {
+    if header(request.headers, "x-amz-checksum-crc32") != payload.crc32 {
       send_error(
         conn,
         400,
@@ -1285,7 +1304,16 @@ async fn handle_request(
         return
       }
       if multipart {
-        handle_multipart(config, request, name, key, params, request_body, conn) catch {
+        handle_multipart(
+          config,
+          request,
+          name,
+          key,
+          params,
+          request_body,
+          conn,
+          staged=payload,
+        ) catch {
           error => {
             ignore(error)
             log_event("error", "multipart_failed", "Multipart request failed.")
@@ -1350,7 +1378,13 @@ async fn handle_request(
                 }
               } else {
                 put_object(
-                  config, request, name, object_key, request_body, conn,
+                  config,
+                  request,
+                  name,
+                  object_key,
+                  request_body,
+                  conn,
+                  staged=payload,
                 )
               }
             Get => get_object(config, request, name, object_key, conn)
@@ -1383,11 +1417,12 @@ async fn start_server() -> Unit {
     }
   }
   if config.max_request_bytes == 0 ||
-    config.max_buffered_bytes < config.max_request_bytes ||
+    config.max_staged_bytes == 0 ||
+    config.max_buffered_bytes == 0 ||
     config.max_connections == 0 ||
     config.request_timeout == 0 {
     log_event(
-      "error", "configuration_invalid", "Invalid request resource limits: expected positive bounded limits with max_buffered_bytes >= max_request_bytes.",
+      "error", "configuration_invalid", "Invalid request resource limits: expected positive bounded limits and max_buffered_bytes >= 16384.",
     )
     @env.exit(1)
   }

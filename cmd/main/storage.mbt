@@ -288,6 +288,16 @@ async fn recover_bucket(config : Config, bucket : String) -> Unit {
 
 ///|
 async fn recover_storage(config : Config) -> Unit {
+  for name in @fs.readdir(config.root, include_hidden=true) {
+    if name.has_prefix(".request-") && name.has_suffix(".tmp") {
+      let identifier = name[9:name.length() - 4]
+      if range_number(identifier) is None ||
+        @fs.kind(config.root + "/" + name, follow_symlink=false) != Regular {
+        raise Failure("Invalid request staging file")
+      }
+      @fs.remove(config.root + "/" + name)
+    }
+  }
   for bucket in @fs.readdir(config.root, include_hidden=false) {
     if @core.valid_bucket_name(bucket) {
       recover_bucket(config, bucket)

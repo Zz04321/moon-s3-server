@@ -12,6 +12,7 @@ fn authorize_presigned(
   access_key : String,
   secret_key : String,
   now : Int64,
+  digest? : String,
 ) -> Bool {
   if !(request.meth is Get || request.meth is Head || request.meth is Put) ||
     !header(request.headers, "authorization").is_empty() {
@@ -95,7 +96,8 @@ fn authorize_presigned(
   let payload_hash = header(request.headers, "x-amz-content-sha256")
   if !payload_hash.is_empty() &&
     payload_hash != "UNSIGNED-PAYLOAD" &&
-    payload_hash != @core.sha256_hex(body.clamped_view()) {
+    payload_hash !=
+    digest.unwrap_or_else(() => @core.sha256_hex(body.clamped_view())) {
     return false
   }
   let signature = auth_params.get("X-Amz-Signature").unwrap_or("")

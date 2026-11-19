@@ -4,13 +4,14 @@ A small S3-compatible object storage server written in MoonBit, for local
 development, CI, and private deployments. Stores data on local disk and uses
 path-style URLs.
 
-**Status:** early development (`v0.1`); not production-ready.
+**Status:** early development (`v0.2`); not production-ready.
 
 ## Features
 
 - Bucket and object CRUD; batch deletion; ListObjectsV2 with prefixes, pagination, and delimiters.
 - Optional SigV4 authentication and presigned GET / HEAD / PUT URLs.
 - Multipart uploads with resumable parts, pagination, abort, and expiration.
+- Stream object/part uploads to disk with bounded buffers and incremental integrity checks.
 - Range downloads, conditional reads/writes, ETags, and Content-Type metadata.
 - Server-side CopyObject across buckets, with source conditions and COPY / REPLACE Content-Type.
 - Write/delete transaction recovery, consistent concurrent reads, and a data directory lock.
@@ -72,8 +73,9 @@ and run `python3 scripts/console.py`; visit `http://127.0.0.1:9001`.
 | `MOON_S3_WEBHOOK_SECRET` | Unset | Sign webhook bodies with HMAC-SHA256 |
 | `MOON_S3_WEBHOOK_TIMEOUT_MS` | `5000` | Callback timeout; 100–60000 milliseconds |
 | `MOON_S3_SHUTDOWN_TIMEOUT_MS` | `10000` | Drain active requests on SIGINT/SIGTERM; 100–300000 milliseconds |
-| `MOON_S3_MAX_REQUEST_BYTES` | `67108864` | Maximum buffered request body; 1–536870912 bytes |
-| `MOON_S3_MAX_BUFFERED_BYTES` | `134217728` | Shared body budget; at least the per-request limit, up to 536870912 bytes |
+| `MOON_S3_MAX_REQUEST_BYTES` | `67108864` | Maximum request body; 1–536870912 bytes |
+| `MOON_S3_MAX_BUFFERED_BYTES` | `134217728` | Shared upload windows and control-body buffers; 16384–536870912 bytes |
+| `MOON_S3_MAX_STAGED_BYTES` | `536870912` | Shared in-flight upload payload on disk; 1–536870912 bytes |
 | `MOON_S3_MAX_CONNECTIONS` | `128` | Maximum simultaneous connections; 1–4096 |
 | `MOON_S3_REQUEST_TIMEOUT_MS` | `30000` | Header-read and request-handling deadlines; 100–3600000 ms |
 
@@ -100,7 +102,8 @@ See [event webhooks](docs/events.md) for payloads, retries, and receiver dedupli
 ## Limits and recovery
 
 - Object keys support 1–1024 UTF-8 bytes; invalid URL encoding is rejected.
-- Upload requests are buffered in memory with per-request and shared limits; choose multipart sizes accordingly.
+- Object/part uploads use 16 KiB buffer windows and disk staging; control bodies stay in memory.
+  Per-request and shared memory/disk limits apply; choose multipart sizes accordingly.
   Parts are numbered 1–10000 and must be at least 5 MiB except the last.
 - Multipart state survives restarts. Expiration cleanup runs at startup and
   on multipart traffic; upload activity does not extend the lifetime.
@@ -136,7 +139,7 @@ See [administration](docs/administration.md) for guarantees, limits, and recover
 moon test --target native
 moon info && moon fmt
 bash scripts/smoke.sh
-for suite in auth list object presigned multipart storage copy admin cors version policy event cli console operations safety delete; do
+for suite in auth list object presigned multipart storage copy admin cors version policy event cli console operations safety delete streaming; do
   python3 "scripts/${suite}_regression.py"
 done
 ```

@@ -173,7 +173,7 @@ def main():
                    '{"webhook_timeout_ms": 21474836485000}', '{"root": ""}',
                    '{"access_key": "a"}', '{"max_request_bytes": 0}',
                    '{"max_request_bytes": 536870913}', '{"max_connections": 4097}',
-                   '{"max_buffered_bytes": 1}', '{"request_timeout_ms": 99}',
+                   '{"max_buffered_bytes": 1}', '{"max_buffered_bytes": 16383}', '{"max_staged_bytes": 0}', '{"max_staged_bytes": 536870913}', '{"request_timeout_ms": 99}',
                    '{"request_timeout_ms": 3600001}', ' ' * 65537, '\xff']
         for content in invalid:
             config.write_bytes(content.encode("latin1"))

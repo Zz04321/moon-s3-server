@@ -55,6 +55,12 @@ backups to fail. For transaction leftovers, start the server to run its recovery
 first, then stop it and retry. A malformed committed transaction requires
 investigation; the administration tool does not guess or discard it. Symlinks,
 hard links, devices, and other special files are rejected.
+Interrupted streaming uploads can leave private `.request-ID.tmp` files at
+the data root after a crash. These contain uncommitted payloads; the server
+removes them during startup recovery under the exclusive storage lock. The
+offline tool refuses them until recovery runs, and never includes them in a
+completed backup. Source and bucket directories must share a filesystem so
+verified uploads can be atomically renamed into storage.
 
 ## Restore into a new directory
 

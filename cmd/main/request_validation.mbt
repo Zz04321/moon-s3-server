@@ -113,30 +113,6 @@ fn unsupported_headers(request : @http.Request) -> Bool {
 }
 
 ///|
-fn crc32_base64(body : Bytes) -> String {
-  let mut checksum = 0xffffffffU
-  for byte in body {
-    checksum = checksum ^ byte.to_uint()
-    for _ in 0..<8 {
-      checksum = if (checksum & 1U) == 1U {
-        (checksum >> 1) ^ 0xedb88320U
-      } else {
-        checksum >> 1
-      }
-    }
-  }
-  checksum = checksum ^ 0xffffffffU
-  @base64.encode(
-    Bytes::from_array([
-      (checksum >> 24).to_byte(),
-      (checksum >> 16).to_byte(),
-      (checksum >> 8).to_byte(),
-      checksum.to_byte(),
-    ]).clamped_view(),
-  )
-}
-
-///|
 fn valid_operation_query(
   request : @http.Request,
   params : Array[@core.QueryParam],

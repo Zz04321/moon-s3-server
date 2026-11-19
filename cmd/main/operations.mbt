@@ -25,6 +25,7 @@ struct Runtime {
   mut errors : Int64
   mut duration_ms : Int64
   mut buffered_bytes : Int32
+  mut staged_bytes : Int32
   statuses : Map[Int32, Int64]
   connections : Map[Int64, LiveConnection]
 }
@@ -42,6 +43,7 @@ fn Runtime::new() -> Runtime {
     errors: 0L,
     duration_ms: 0L,
     buffered_bytes: 0,
+    staged_bytes: 0,
     statuses: Map([]),
     connections: Map([]),
   }
@@ -75,6 +77,7 @@ fn metrics(runtime : Runtime) -> String {
     "# TYPE moon_s3_connections gauge\nmoon_s3_connections \{runtime.connections.length()}\n" +
     "# TYPE moon_s3_requests_active gauge\nmoon_s3_requests_active \{runtime.active}\n" +
     "# TYPE moon_s3_buffered_request_bytes gauge\nmoon_s3_buffered_request_bytes \{runtime.buffered_bytes}\n" +
+    "# TYPE moon_s3_staged_request_bytes gauge\nmoon_s3_staged_request_bytes \{runtime.staged_bytes}\n" +
     "# TYPE moon_s3_requests_total counter\n"
   let statuses = runtime.statuses.keys().to_array()
   statuses.sort()

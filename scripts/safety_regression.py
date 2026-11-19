@@ -183,10 +183,11 @@ def storage_safety(directory):
     print("Storage safety passed: unsafe API rejection, MD5, atomic conditions, UTF-8, 1024-byte keys, versions, copy, multipart, restart and verified backups.")
 
 
-def raw_connection(port, length, body=b"", chunked=False):
+def raw_connection(port, length, body=b"", chunked=False, control=False):
     connection = socket.create_connection(("127.0.0.1", port), timeout=3)
     framing = "Transfer-Encoding: chunked" if chunked else f"Content-Length: {length}"
-    connection.sendall(f"PUT /resource-bucket/key HTTP/1.1\r\nHost: localhost\r\n{framing}\r\n\r\n".encode() + body)
+    target = "POST /resource-bucket?delete" if control else "PUT /resource-bucket/key"
+    connection.sendall(f"{target} HTTP/1.1\r\nHost: localhost\r\n{framing}\r\n\r\n".encode() + body)
     return connection
 
 
@@ -213,9 +214,9 @@ def resource_safety(directory):
         connection = raw_connection(port, 0, b"10001\r\n" + b"a" * 65537 + b"\r\n0\r\n\r\n", chunked=True)
         assert raw_status(connection) == 413
         connection.close()
-        first = raw_connection(port, 49152, b"a" * 40000)
+        first = raw_connection(port, 49152, b"a" * 40000, control=True)
         time.sleep(0.05)
-        second = raw_connection(port, 49152, b"b" * 30000)
+        second = raw_connection(port, 49152, b"b" * 30000, control=True)
         assert raw_status(second) == 503
         second.close()
         first.sendall(b"a" * 9152)

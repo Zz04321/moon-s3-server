@@ -35,6 +35,8 @@ type PublicReadPolicy
 
 type QueuedEvent
 
+type RequestBody
+
 type RequestTrace
 
 type ResponseConnection

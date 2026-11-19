@@ -71,7 +71,7 @@ This configuration provides no evidence of IAM compatibility.
 | Listing | ListObjectsV2, prefix, delimiter, pagination, start-after, URL encoding, optional owner | `fetch-owner=true` returns the service owner `moonbit`; V1 marker pagination is outside the contract |
 | Objects | PUT/GET/HEAD/DELETE, ETag, Content-Type, one Range, read/write conditions | No arbitrary metadata, tags, ACL, storage classes, encryption or response override parameters |
 | Copy | CopyObject, source conditions, COPY/REPLACE Content-Type, versioned source | No UploadPartCopy; source limit 5 GiB; no tags/metadata propagation |
-| Multipart | Initiate, upload/list parts, list uploads, complete, abort, startup recovery, expiration | 1–10000 parts; 5 MiB minimum except last; parts must fit request-body budget |
+| Multipart | Initiate, upload/list parts, list uploads, complete, abort, startup recovery, expiration | 1–10000 parts; 5 MiB minimum except last; parts must fit request and shared staging limits |
 | Batch delete | `POST /bucket?delete`, 1–1000 keys, optional VersionId, Quiet, per-key errors | At most 1 MiB XML; no conditional object fields, MFA, object-lock retention or batch-wide conditions |
 | Integrity | Content-MD5 and request CRC32 verification | Optional read checksum mode accepted without response checksum fields; other algorithms/trailers rejected |
 | Settings | Bucket CORS, enable/suspend versioning, restricted public-read policies | General IAM, ACLs and lifecycle configuration outside the contract |

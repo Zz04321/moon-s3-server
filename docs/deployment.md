@@ -20,7 +20,7 @@ file selected, the existing defaults apply. Keys are lowercase versions of the
 environment variable suffix: `root`, `listen`, `access_key`, `secret_key`,
 `cors_origin`, `multipart_ttl_seconds`, `webhook_url`, `webhook_secret`,
 `webhook_timeout_ms`, `shutdown_timeout_ms`, `max_request_bytes`,
-`max_buffered_bytes`, `max_connections` and `request_timeout_ms`. The timeout,
+`max_buffered_bytes`, `max_staged_bytes`, `max_connections` and `request_timeout_ms`. The timeout,
 lifetime and resource-limit settings are JSON integers; all other settings are strings. Unknown keys,
 duplicate keys, invalid types and unreadable files fail startup.
 
@@ -35,14 +35,47 @@ Configuration is loaded once at startup; restart to apply changes.
 `MOON_S3_WEBHOOK_TIMEOUT_MS` accepts 100–60000 ms; multipart TTL accepts
 1–31536000 seconds. Invalid ranges fail startup.
 
-Request bodies default to at most 64 MiB each, with a shared 128 MiB buffered
-payload budget. Both limits can be configured up to 512 MiB; the shared budget
-must be at least the per-request limit. This is a payload budget, not a process
-RSS limit: parsing, hashing and buffer copies require additional memory. Fixed
+Request bodies default to at most 64 MiB each (up to 512 MiB). Ordinary
+PutObject and UploadPart requests stream to private files on the data-root
+filesystem, with incremental SHA-256/MD5 and optional CRC32 checks. Each
+receiving upload reserves a 16 KiB window (or the smaller per-request limit).
+Disk writes finish before the next read, providing backpressure. Configuration
+and other control bodies remain buffered in memory. The shared buffered-byte
+budget defaults to 128 MiB (16 KiB–512 MiB), independently of the request limit.
+It can be smaller than an upload: for example, a 32 KiB budget allows two
+16 KiB windows while accepting 128 MiB uploads if the other limits permit.
+This is a payload budget, not a process RSS limit: parsing, hashing, control
+buffer copies and HTTP dependency buffers require additional memory. Fixed
 Content-Length requests exceeding the per-request limit receive 413 immediately;
 chunked requests are bounded while reading. Shared-budget exhaustion returns
 503 SlowDown. Both responses close the connection. Limits apply before
 authentication, and capacity is released on completion, error or timeout.
+
+`max_staged_bytes` bounds all in-flight upload payloads on disk, including
+completed bodies waiting for the mutation lock. It defaults to 512 MiB and
+accepts 1–536870912 bytes. Exhaustion returns 503 SlowDown; it is not a disk
+free-space guarantee or a quota for committed objects. Allow additional room
+for object history, multipart parts, transactions and backups. File-system
+write errors fail the request without publishing its staged body.
+
+Temporary `.request-ID.tmp` files use mode 0600 at the data root. Authentication,
+digests and write conditions must succeed before the file is renamed into
+the existing journaled transaction or multipart part. A failed upload preserves
+the prior object/part. The staging file is synced before publication; completed
+part renames also sync the upload directory. Disconnects, errors and timeouts
+remove temporary files; startup under the exclusive data lock discards files
+left by a process crash. Offline admin refuses unfinished staging files: start
+the server for recovery, stop it, then retry. Startup rejects non-regular or
+invalidly named request staging entries. Data-root and bucket storage must be
+on the same filesystem for these atomic renames.
+
+`python3 scripts/streaming_regression.py --report /tmp/streaming.json` validates
+128 MiB uploads with a 32 KiB shared memory budget, samples the Linux server's
+RSS and upload gauges, verifies SHA-256/MD5/CRC32, and tests two concurrent
+large uploads. It also exercises truncated/chunked requests, timeout cleanup,
+disk/window budget exhaustion, version conditions, existing-part preservation
+and process-kill recovery. The output is local evidence, not a throughput SLA
+or a process-memory bound for arbitrary workloads.
 
 `max_connections` defaults to 128 (range 1–4096); excess connections are closed.
 `request_timeout_ms` defaults to 30000 (range 100–3600000) and bounds each header
@@ -126,6 +159,9 @@ include body reads, lock waits and response writes. These metrics describe the
 HTTP process; they do not report disk capacity or persisted object inventory.
 Labels contain only HTTP statuses, never bucket names or object keys.
 `moon_s3_buffered_request_bytes` exposes the reserved body payload budget.
+It includes fixed upload windows while receiving and buffered control bodies.
+`moon_s3_staged_request_bytes` reports in-flight upload payload bytes on disk.
+Both return to zero after requests finish; they do not measure total storage.
 
 ## Docker
 
@@ -166,8 +202,8 @@ credentials, configuration files and storage data are excluded.
 
 For access beyond localhost, place a TLS reverse proxy in front of the server
 and preserve Host, path, query and signed headers. Set request size/time limits
-to match multipart usage. Uploads are currently buffered in memory, so bound
-concurrent uploads and part sizes through the proxy and container resource
+to match multipart usage. Bound concurrent uploads, staging disk usage and
+part sizes through server settings, the proxy and container resource
 limits. Keep data on a durable local filesystem and follow
 [offline backup and restore](administration.md). The Web console runs as a
 separate process; see [console deployment](console.md).
@@ -201,9 +237,9 @@ many smaller headers are also bounded by the available buffers. These limits
 apply before the MoonBit HTTP parser, whose own check runs after parsing.
 Tests cover both individual and aggregate header overflow, request line 414,
 and body 413. The 64 MiB body limit matches the server's default per-request
-limit. Request buffering is disabled; the backend still buffers accepted bodies
-within its configured budget. Change both limits together if needed, including
-multipart part sizes. Proxy timeouts measure inactivity; server deadlines
+limit. Request buffering is disabled. Change both request-size limits together
+if needed, including multipart part sizes. Object/part payloads stream to
+bounded disk staging; control bodies still use bounded memory. Proxy timeouts measure inactivity; server deadlines
 still bound each header read and request handler.
 
 `mc cp` over HTTP uses AWS streaming signatures, which are unsupported. Use

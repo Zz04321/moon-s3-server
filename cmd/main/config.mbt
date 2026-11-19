@@ -13,7 +13,7 @@ fn parse_settings(text : String) -> Map[String, String] raise {
   for name, value in fields {
     if [
         "multipart_ttl_seconds", "webhook_timeout_ms", "shutdown_timeout_ms", "max_request_bytes",
-        "max_buffered_bytes", "max_connections", "request_timeout_ms",
+        "max_buffered_bytes", "max_staged_bytes", "max_connections", "request_timeout_ms",
       ].contains(name) {
       match value {
         Number(number, ..) if number >= 0.0 &&

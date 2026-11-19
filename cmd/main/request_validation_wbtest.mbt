@@ -28,6 +28,10 @@ test "long keys have deterministic short storage names without changing legacy n
 
 ///|
 test "CRC32 uses the S3 big endian Base64 representation" {
-  assert_eq(crc32_base64(b"123456789"), "y/Q5Jg==")
-  assert_eq(crc32_base64(b""), "AAAAAA==")
+  assert_eq(crc32_encoded(crc32_update(0xffffffffU, b"123456789")), "y/Q5Jg==")
+  assert_eq(crc32_encoded(crc32_update(0xffffffffU, b"")), "AAAAAA==")
+  assert_eq(
+    crc32_encoded(crc32_update(crc32_update(0xffffffffU, b"1234"), b"56789")),
+    "y/Q5Jg==",
+  )
 }

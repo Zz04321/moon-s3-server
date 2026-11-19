@@ -169,15 +169,27 @@ async fn upload_part(
   number : Int32,
   body : Bytes,
   conn : ResponseConnection,
+  staged? : RequestBody,
 ) -> Unit {
   let path = upload_dir(config, bucket, upload.id) +
     "/part." +
     number.to_string()
   let temporary = path + ".tmp"
-  @fs.write_file(temporary, body, sync=Full)
+  let etag = match staged {
+    Some(staged) => staged.md5
+    None => @core.md5_hex(body.clamped_view())
+  }
+  match staged {
+    Some(staged) => {
+      @fs.rename(staged.path.unwrap(), temporary, replace=true)
+      sync_directory(config.root)
+    }
+    None => @fs.write_file(temporary, body, sync=Full)
+  }
   @fs.rename(temporary, path, replace=true)
+  sync_directory(upload_dir(config, bucket, upload.id))
   conn.send_response(200, "OK", extra_headers={
-    "ETag": "\"" + @core.md5_hex(body.clamped_view()) + "\"",
+    "ETag": "\"" + etag + "\"",
     "Access-Control-Allow-Origin": config.cors_origin,
     "Access-Control-Expose-Headers": "ETag",
   })
@@ -535,6 +547,7 @@ async fn handle_multipart(
   params : Array[@core.QueryParam],
   body : Bytes,
   conn : ResponseConnection,
+  staged? : RequestBody,
 ) -> Unit {
   if request.headers.contains(@http.CaseInsensitiveString("x-amz-copy-source")) {
     send_error(
@@ -670,7 +683,7 @@ async fn handle_multipart(
       )
       return
     }
-    upload_part(config, bucket, upload, number, body, conn)
+    upload_part(config, bucket, upload, number, body, conn, staged?)
     return
   }
   if part_number is Some(_) {

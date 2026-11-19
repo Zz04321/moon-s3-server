@@ -7,7 +7,7 @@ MoonBit module name remains `Zz04321/moon-s3-server` to preserve imports.
 ## Automation
 
 - **CI** runs on pushes to `main`, pull requests and manual dispatch. It checks
-  formatting/interfaces, native compilation, unit tests, smoke, all 17 local
+  formatting/interfaces, native compilation, unit tests, smoke, all 18 local
   regression suites and the extracted release bundle. Reports and the test
   bundle are retained as Actions artifacts for 14 days.
 - **External compatibility** runs manually. It installs locked clients,
@@ -56,7 +56,7 @@ Ubuntu 22.04 with C build tools and OpenSSL development headers.
 
 Start with a clean checkout of the intended release commit. Update `moon.mod`
 and the release notes before committing a new release version. Package names
-derive from `moon.mod`, currently `v0.1.0`; no release has to be published to
+derive from `moon.mod`, currently `v0.2.0`; no release has to be published to
 build an archive.
 
 ```bash
@@ -81,13 +81,13 @@ output across machines.
 
 ## Install a bundle
 
-Download `moon-s3-server-v0.1.0-linux-x86_64.tar.gz`, `manifest.json` and
+Download `moon-s3-server-v0.2.0-linux-x86_64.tar.gz`, `manifest.json` and
 `SHA256SUMS` from the same release. Then:
 
 ```bash
 sha256sum -c SHA256SUMS
-tar -xzf moon-s3-server-v0.1.0-linux-x86_64.tar.gz
-cd moon-s3-server-v0.1.0-linux-x86_64
+tar -xzf moon-s3-server-v0.2.0-linux-x86_64.tar.gz
+cd moon-s3-server-v0.2.0-linux-x86_64
 MOON_S3_ACCESS_KEY=local-access MOON_S3_SECRET_KEY=replace-this-secret \
   MOON_S3_ROOT=./data MOON_S3_LISTEN=127.0.0.1:9000 bin/moon-s3-server
 ```
@@ -102,7 +102,7 @@ control and use the TLS proxy for remote access; see [deployment](deployment.md)
 The extracted archive has a runtime Dockerfile; it needs no MoonBit compiler:
 
 ```bash
-docker build -t moon-s3-server:v0.1.0 .
+docker build -t moon-s3-server:v0.2.0 .
 export MOON_S3_ACCESS_KEY=local-access
 export MOON_S3_SECRET_KEY=replace-this-secret
 docker compose up -d

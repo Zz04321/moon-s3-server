@@ -7,7 +7,7 @@ import sys
 
 
 PROJECT = pathlib.Path(__file__).resolve().parents[1]
-SUITES = "auth list object presigned multipart storage copy admin cors version policy event cli console operations safety delete".split()
+SUITES = "auth list object presigned multipart storage copy admin cors version policy event cli console operations safety delete streaming".split()
 SDK_SUITES = "presigned copy multipart cors version policy".split()
 
 
