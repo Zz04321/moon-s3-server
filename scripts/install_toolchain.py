@@ -17,17 +17,21 @@ PROJECT = pathlib.Path(__file__).resolve().parents[1]
 def main():
     parser = argparse.ArgumentParser(description="Install the hash-locked MoonBit toolchain into a new directory.")
     parser.add_argument("--destination", required=True, type=pathlib.Path)
-    parser.add_argument("--archives", type=pathlib.Path, help="Use already downloaded archives from this directory")
+    sources = parser.add_mutually_exclusive_group()
+    sources.add_argument("--archives", type=pathlib.Path, help="Use already downloaded archives from this directory")
+    sources.add_argument("--cache", type=pathlib.Path, help="Download missing archives into a persistent directory; verify every cached archive")
     args = parser.parse_args()
     if platform.system() != "Linux" or platform.machine() != "x86_64":
         parser.error("the locked toolchain supports Linux x86-64")
     destination = args.destination.resolve()
     destination.mkdir(parents=True, exist_ok=False)
     lock = json.loads((PROJECT / "scripts/toolchain-lock.json").read_text())
+    if args.cache:
+        args.cache.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="moon-s3-toolchain-") as temporary:
         for entry in lock["archives"]:
-            archive = args.archives / entry["name"] if args.archives else pathlib.Path(temporary) / entry["name"]
-            if not args.archives:
+            archive = (args.archives or args.cache or pathlib.Path(temporary)) / entry["name"]
+            if not args.archives and not archive.exists():
                 with urllib.request.urlopen(entry["url"], timeout=120) as response, archive.open("wb") as output:
                     while chunk := response.read(1024 * 1024):
                         output.write(chunk)

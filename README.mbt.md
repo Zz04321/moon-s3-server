@@ -31,7 +31,7 @@ multipart round trip), AWS CLI 2.22.35, MinIO `mc` over TLS, and selected Ceph
 ## Quick start
 
 Requires the [MoonBit CLI](https://www.moonbitlang.com/download/)
-(tested with `moon 0.1.20261102`; CI uses the hash-locked `0.1.20261104` snapshot).
+(tested with `moon 0.1.20261102`; CI uses the hash-locked `0.1.20261117` snapshot).
 
 ```bash
 git clone https://github.com/zzSmall6/moon-s3-server.git

@@ -31,13 +31,19 @@ Copilot environment setup workflow remains separate from these checks.
 [toolchain-lock.json](../scripts/toolchain-lock.json) pins the compiler and
 core archives by SHA-256. Upstream dated archive URLs were unavailable during
 setup, so the lock uses upstream `latest` URLs with exact content hashes.
-The locked snapshot contains `moon 0.1.20261104`, `moonc v0.10.20+65efd5b93`
-and `moonrun 0.1.20261104`; these versions are printed in workflow logs.
+The locked snapshot contains `moon 0.1.20261117`, `moonc v0.10.21+06da1ed44`
+and `moonrun 0.1.20261117`; these versions are printed in workflow logs.
 If those URLs change, installation fails before extracting the changed archive;
 it never silently adopts a new compiler. Review a toolchain update, refresh both
 hashes together, rerun native/SDK/external acceptance, then commit the new lock.
 Archive URLs alone are not a permanent mirror: retain the verified archives
 or provide a verified local cache for long-term rebuilds.
+CI caches the two archives under a key derived from the lock file and
+rechecks their hashes on every installation. This lets a retained cache
+continue installing the selected toolchain after upstream `latest` changes.
+An expired or missing cache still requires the matching upstream archives;
+it never accepts mismatching downloads. `--cache DIRECTORY` enables the
+same verified download cache locally.
 
 ```bash
 python3 scripts/install_toolchain.py --destination /tmp/moon-s3-toolchain
